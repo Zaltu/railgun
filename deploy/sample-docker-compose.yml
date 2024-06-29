@@ -1,0 +1,41 @@
+services:
+  # Railgun App
+  railgun_app:
+    image: railgun:0.0.1
+    ports:
+      - "127.0.0.1:41516:80"
+    restart: always
+    volumes:
+      - ./secrets:/opt/railgun_app/secrets
+    networks:
+      - railgun_network
+
+  # Redis
+  stellar:
+    image: redis:7
+    restart: always
+    ports:
+      - '127.0.0.1:6379:6379'
+    command: redis-server --loglevel warning
+    networks:
+      - railgun_network
+
+  # Stellar DB
+  stellardb:
+    image: postgres:16
+    ports:
+      - "127.0.0.1:6969:5432"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: railgun
+      POSTGRES_DB: railgun_internal
+      PGDATA: /var/lib/postgresql/data  # Default
+    restart: always
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    networks:
+      - railgun_network
+
+networks:
+  railgun_network:
+    name: railgun_network

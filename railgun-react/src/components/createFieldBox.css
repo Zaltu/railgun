@@ -1,0 +1,77 @@
+.RG_NEW_FIELD_WINDOW {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
+
+    z-index: 20;
+
+    /* min-height: 545px; */
+    min-width: 800px;
+
+    background-color: var(--RG_ITEM_GREY);
+    box-shadow: 0px 0px 25px 0px black;
+    border-radius: 5px;
+    
+    font-size: larger;
+    color: var(--RG_TEXT_GREY);
+}
+
+.RG_NEWFIELD_CHUNK {
+    padding: 15px;
+}
+
+.RG_NEWFIELD_IDENTIFY_CHUNK {
+    display: flex;
+    gap: 10px;
+}
+
+.RG_NEWFIELD_OPTIONS_CHUNK {
+    display: flex;
+}
+
+.RG_NEWFIELD_FIELDTYPE {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.RG_NEWFIELD_APPLY_CHUNK {
+    display:flex;
+    justify-content: space-between;
+}
+
+.RG_NEWFIELD_RADIOLABEL {
+    font-size: medium;
+}
+
+.RG_NEWFIELD_PARAM_CHUNK {
+    display: flex;
+    gap: 5px;
+}
+
+
+
+
+/* INPUT OVERRIDES */
+/* textarea:focus, input[type="string"]:focus {
+    outline: 2px solid orange;
+}
+
+input[type="radio"] {
+    accent-color: orange;
+} */
+
+input, textarea{
+    text-indent: 3px;
+    background-color: var(--RG_HIGHLIGHT_GREY);
+    color: var(--RG_TEXT_GREY);
+    accent-color: orange;
+}
+
+textarea {
+    padding-top: 3px;
+}

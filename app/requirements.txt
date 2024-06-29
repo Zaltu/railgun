@@ -1,0 +1,5 @@
+psycopg [binary] == 3.1.18
+psycopg [pool] == 3.2.1
+fastapi == 0.110.1
+uvicorn == 0.29.0
+redis == 5.0.4

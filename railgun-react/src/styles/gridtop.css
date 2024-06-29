@@ -1,0 +1,55 @@
+.RG_GRIDTOP_BG {
+    display: flex;
+    gap: 25px;
+    padding-left: 25px;
+    background-color: var(--RG_ITEM_GREY);
+}
+
+
+.RG_HIGHLIGHT_BUTTON {
+    color: white;
+    background-color: orange;
+
+    border-radius: 5px;
+    padding: 6px 18px;
+    margin: 8px;  /*TODO this extra padding won't be necessary if the entity type icon is displayed in front */
+
+    font-size: 14px;
+    font-weight: bolder;
+    text-align: center;
+
+    user-select: none;
+
+    border-width: 1px;
+    border-color: transparent;
+    border-style: solid;
+}
+
+.RG_HIGHLIGHT_BUTTON:hover {
+    background-color: rgb(201, 130, 0);
+}
+
+
+.RG_SUBTLE_BUTTON {
+    color: var(--RG_TEXT_GREY);
+    background-color: transparent;
+
+    border-radius: 5px;
+    padding: 6px 18px;
+    margin: 8px;  /*TODO this extra padding won't be necessary if the entity type icon is displayed in front */
+
+    font-size: 14px;
+    font-weight: bolder;
+    text-align: center;
+
+    user-select: none;
+
+    border-width: 1px;
+    border-color: white;
+    border-style: solid;
+}
+
+.RG_SUBTLE_BUTTON:hover {
+    background-color: var(--RG_HIGHLIGHT_GREY);
+}
+

@@ -1,0 +1,53 @@
+.RG_EDIT_FIELD_WINDOW {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
+
+    z-index: 20;
+
+    /* min-height: 545px; */
+    min-width: 800px;
+
+    background-color: var(--RG_ITEM_GREY);
+    box-shadow: 0px 0px 25px 0px black;
+    border-radius: 5px;
+    
+    font-size: larger;
+    color: var(--RG_TEXT_GREY);
+}
+
+.RG_HEADER_CONTEXTMENU {
+    position: absolute;
+    z-index: 5;
+
+    /* background-color: var(--RG_ITEM_GREY);
+    border-color: var(--RG_TEXT_GREY);
+    border-width: 1px;
+    border-style: solid; */
+    background-color: var(--RG_ITEM_GREY);
+    /* border-color: transparent;
+    /* border-color: var(--RG_TEXT_GREY); */
+    /* border-style: solid; */
+    /* border-width: 1px; */
+    box-shadow: 0px 0px 4px 0px black;
+    color: var(--RG_TEXT_GREY);
+
+    width: fit-content;
+    white-space: nowrap;
+}
+
+.RG_HEADER_CONTEXTMENU_ITEM {
+    color: var(--RG_TEXT_GREY);
+    padding-left: 2px;
+    padding-right: 2px;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+.RG_HEADER_CONTEXTMENU_ITEM:hover {
+    background-color: var(--RG_HIGHLIGHT_GREY);
+}

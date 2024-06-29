@@ -1,0 +1,22 @@
+:root {
+    --RG_HEADER_GREY: rgb(49, 49, 49);
+    --RG_ITEM_GREY: rgb(73, 73, 73);
+    --RG_HIGHLIGHT_GREY: rgb(60, 60, 60);
+    --RG_TEXT_GREY: rgba(238, 238, 238, 0.85);
+}
+
+
+* {
+    font-family: Arial, Helvetica, sans-serif;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.prevent-select {
+    user-select: none;
+}
+
+.hidden {
+    visibility: hidden;
+}

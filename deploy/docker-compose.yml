@@ -1,0 +1,14 @@
+services:
+  stellardb:
+    image: postgres:16
+    ports:
+      - "127.0.0.1:6969:5432"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: railgun
+      POSTGRES_DB: railgun_internal
+      PGDATA: /var/lib/postgresql/data  # Default
+    restart: always
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./stellar_setup.sql:/docker-entrypoint-initdb.d/init.sql
