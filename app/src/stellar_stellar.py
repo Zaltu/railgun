@@ -618,8 +618,6 @@ class StellarStellar():
     #####################################
     #########   FIELD  TYPES   ##########
     #####################################
-    # TODO PRIO
-    # ENUM -> yes -> enum|stellar
     def _field_create_simple(self, request, db, nullable=True, default=None):
         """
         Create a "simple" field.
@@ -778,11 +776,11 @@ class StellarStellar():
             # Create foreign field record
             FF_PARAMS = {
                 "constraints":{
-                    request['entity']:[{
+                    request['entity']:{
                         "relation": tab,
                         "table": table_sc["code"],
                         "col": request["data"]["code"]
-                    }]
+                    }
                 }
             }
             FF_CODE = f"{table_sc['code']}"

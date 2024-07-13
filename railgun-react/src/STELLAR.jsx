@@ -12,4 +12,38 @@ async function telescope(schema, entity, setGlobal=true) {
     return LOCAL_STELLAR
 }
 
-export {STELLAR, telescope};
+async function fetchAutocompleteOptions(fieldConstraints, input) {
+    let allOptions = []
+    await Promise.all(Object.keys(fieldConstraints).map(async (possibleType) => {
+        let fetchData = {
+            "schema": STELLAR.code,
+            "entity": possibleType,
+            "read": {
+                "return_fields": [STELLAR.entities[possibleType].display_name_col],
+                "filters": {  // TODO this filter should be defined in the params of the multi/entity field(s)
+                    "filter_operator": "AND",
+                    "filters": [
+                                [STELLAR.entities[possibleType].display_name_col, "starts_with", input],
+                            ]
+                },
+                "pagination": 10
+            }
+        }
+        let response = await fetch("http://127.0.0.1:8888/read", {
+            mode:"cors",
+            method:"POST",
+            body: JSON.stringify(fetchData)
+        })
+        if (!response.ok) {
+            return  // This possibleEntity will not be displayed.
+        }
+        response = await response.json()
+        let theseOptions = response.map(ent => {
+            return {label: ent[STELLAR.entities[possibleType].display_name_col], value: JSON.stringify(ent)}
+        })
+        allOptions = allOptions.concat(theseOptions)
+    }))
+    return allOptions
+}
+
+export {STELLAR, telescope, fetchAutocompleteOptions};

@@ -18,7 +18,7 @@ function GridLayout(props) {
             <Grid context={props.context} data={props.data} fields={props.fields} showFieldEditWindow={showFieldEdit} setSelectedField={setSelectedField}/>
             <NewFieldWindow context={props.context} displaySelf={showFieldCreation} display={fieldCreateVisible ? 'visible' : 'hidden'} />
             <EditFieldWindow context={props.context} displaySelf={showFieldEdit} display={fieldEditVisible ? 'visible' : 'hidden'} field={selectedFieldData} />
-            <NewEntityWindow context={props.context} display={entityCreateVisible ? 'visible' : 'hidden'} displaySelf={showEntityCreation} />
+            {entityCreateVisible ? <NewEntityWindow context={props.context} displaySelf={showEntityCreation} /> : null }
         </div>
     )
 }

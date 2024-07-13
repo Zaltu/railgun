@@ -76,6 +76,8 @@ class Railgun(FastAPI):
         table_sc = schema_sc[request["entity"]]["fields"]
         return_fields = []
         joins = {"ENTITY":{}, "MULTIENTITY": {}}
+        if "uid" not in request["read"]["return_fields"]:
+            request["read"]["return_fields"].append("uid")
         for field in request["read"].get("return_fields") or ["uid"]:
             if table_sc[field]["type"] == "ENTITY":
                 joins["ENTITY"][field] = table_sc[field]["params"]["constraints"].values()
@@ -282,7 +284,7 @@ class Railgun(FastAPI):
             elif stellar_field["type"] == "MULTIENTITY":
                 update_rel.append({
                     "sf": stellar_field,
-                    "data": op["data"].pop(update_field)
+                    "data": op["data"].pop(update_field) or []
                 })
             elif stellar_field["type"] == "ENTITY":
                 # we presume that the value being used for data is correct
@@ -290,10 +292,11 @@ class Railgun(FastAPI):
                 assert type(op["data"][update_field]) == dict
                 update_rel.append({
                     "sf": stellar_field,
-                    "data": [op["data"].pop(update_field)]
+                    "data": [op["data"].pop(update_field) or []]
                 })
-
-        updated = db.update(op, conn)
+        if op["data"]:  # We only need to do a "normal" update if there's non-relation things to update
+            updated = db.update(op, conn)
+        else: updated = {"type": op["entity"], "uid": op["entity_id"]}
         for ftu in update_rel:  # TODO sucks that we have to iterate over these essentially twice
             for delrel in ftu["sf"]["params"]["constraints"].values():
                 db.delete_relation(

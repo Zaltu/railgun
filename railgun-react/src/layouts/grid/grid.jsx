@@ -1,7 +1,9 @@
-import {useState, useReducer, useEffect} from "react";
+import {useRef, useState} from "react";
 import {useReactTable, getCoreRowModel, flexRender} from '@tanstack/react-table';
 import { Menu, Item, useContextMenu } from 'react-contexify';
-import {STELLAR} from '/src/STELLAR.jsx';
+import Select from 'react-select'
+import AsyncSelect from 'react-select/async'
+import {STELLAR, fetchAutocompleteOptions} from '/src/STELLAR.jsx';
 
 import 'react-contexify/ReactContexify.css'
 import '/src/styles/grid.css'
@@ -12,11 +14,11 @@ const TYPE_DISPLAY_ELEMENTS = {
     "TEXT": RG_DEFAULTCELL,
     "INT": RG_DEFAULTCELL,
     "FLOAT": RG_DEFAULTCELL,
-    "JSON": RG_JSON_DISPLAY,  // TODO needs to be escaped, response dejsoning turns the field into an object lmao
+    "JSON": RG_JSON_DISPLAY,
     "DATE": RG_DEFAULTCELL,  // TODO datepicker
-    "LIST": RG_DEFAULTCELL,  // TODO
-    "MULTIENTITY": RG_MULTIENTITY,
-    "ENTITY": RG_ENTITY
+    "LIST": RG_GRID_LIST,
+    "MULTIENTITY": RG_MULTIENTITY,  // TODO
+    "ENTITY": RG_ENTITY  // TODO
 }
 
 
@@ -33,46 +35,208 @@ function RG_CHECKBOX (cell, context) {
 
 function RG_DEFAULTCELL (cell, context) {
     const [editable, setEditable] = useState(false)
-    cell.editable = editable
-    cell.setEditable = setEditable
-    return cell.editable ? 
+
+    return editable ?
         <input
             className="RG_GRID_EDITCELL"
             onFocus={(event) => event.target.select()}
-            onBlur={() => cell.setEditable(false)}
+            onBlur={() => setEditable(false)}
             style={{width: "100%", outline: "none"}}
             type='text'
             defaultValue={cell.getValue()}
             autoFocus
             onKeyDown={(event) => {
                 if (event.key == "Escape"){
-                    cell.setEditable(false)
+                    setEditable(false)
                 } else if (event.key == "Enter") {
                     // Submit data update request
                     updateRG(event, cell, event.target.value, context)
-                    cell.setEditable(false)
+                    setEditable(false)
                 }
             }}
-            onSubmit={() => console.log("Submit")}
         />
 
         :
-
+        //<div> TODO Set edit icon</div>
         <div
             className="RG_GRID_DISPLAYCELL"
+            onDoubleClick={() => setEditable(true)}
         >
             {cell.getValue()}
         </div>
 }
 
-function RG_JSON_DISPLAY (cell, context) {
-    return JSON.stringify(cell.getValue())
+function RG_JSON_DISPLAY (cell, context) {  // TODO proper formatting/textarea  TODO unescaped characters on edit rerender fsr
+    const [editable, setEditable] = useState(false)
+
+    return editable ?
+        <input
+            className="RG_GRID_EDITCELL"
+            onFocus={(event) => event.target.select()}
+            onBlur={() => setEditable(false)}
+            style={{width: "100%", outline: "none"}}
+            type='text'
+            defaultValue={JSON.stringify(cell.getValue())}
+            autoFocus
+            onKeyDown={(event) => {
+                if (event.key == "Escape"){
+                    setEditable(false)
+                } else if (event.key == "Enter") {
+                    // Submit data update request
+                    updateRG(event, cell, event.target.value, context)
+                    setEditable(false)
+                }
+            }}
+        />
+
+        :
+        //<div> TODO Set edit icon</div>
+        <div
+            className="RG_GRID_DISPLAYCELL"
+            onDoubleClick={() => setEditable(true)}
+        >
+            {JSON.stringify(cell.getValue())}
+        </div>
 }
 
+function RG_GRID_LIST (cell, context) {
+    const [editable, setEditable] = useState(false)
+
+    return editable ?
+        <Select
+            name={"SELECT_GRIDLIST_STELLAR_HACK"}  // HACK
+            autoFocus={true}
+            openMenuOnFocus={true}
+            onBlur={() => {
+                setEditable(false)
+            }}
+            onMenuClose={() => setEditable(false)}
+            unstyled
+            options={STELLAR.entities[context.entity_type].fields[cell.column.id].params.constraints.map(((option) => {
+                return {label: option, value: option}
+            }))}
+            className='RG_GRID_LISTFIELD'
+            classNames={{
+                menuList: () => "RG_GRID_LISTDROP",
+                option: () => "RG_GRID_LISTITEM"
+            }}
+            styles={{
+                control: base => ({
+                    ...base,
+                    height: 18,
+                    minHeight: 18
+                }),
+                input: base => ({
+                    ...base,
+                    color: 'transparent'
+                })
+            }}
+            defaultValue={{value: cell.getValue(), label: cell.getValue()}}
+            onKeyDown={(event) => {
+                if (event.key == "Escape"){
+                    setEditable(false)
+                }
+            }}
+            onChange={(newval) => {
+                let fakeEvent = {
+                    target: {
+                        parentNode: document.getElementsByName("SELECT_GRIDLIST_STELLAR_HACK")[0].parentNode.parentNode
+                    }
+                }
+                updateRG(fakeEvent, cell, newval.value, context)
+                setEditable(false)
+            }}
+        />
+
+        :
+        //<div> TODO Set edit icon</div>
+        <div
+            className="RG_GRID_DISPLAYCELL"
+            onDoubleClick={() => {
+                setEditable(true)
+            }}
+        >
+            {cell.getValue()}
+        </div>
+}
+
+
 function RG_MULTIENTITY (cell, context) {
-    return cell.getValue().map(entity => (
-        entity[STELLAR["entities"][entity.type].display_name_col]
-    )).join(', ')
+    const [editable, setEditable] = useState(false)
+    const ment = useRef()
+
+    return editable ? (
+        <AsyncSelect
+            unstyled
+            isMulti
+            ref={ment}
+            name={"SELECT_GRIDMULTIENT_STELLAR_HACK"}  // HACK
+            autoFocus={true}
+            openMenuOnFocus={true}
+            onBlur={() => {
+                setEditable(false)
+            }}
+            cacheOptions
+            defaultValue={(cell.getValue()||[]).map(ent => {
+                return {label: ent[STELLAR.entities[ent["type"]].display_name_col], value: JSON.stringify(ent)}
+            })}
+            loadOptions={(inputValue) => {
+                return fetchAutocompleteOptions(STELLAR.entities[context.entity_type].fields[cell.column.id].params.constraints, inputValue)
+            }}
+            noOptionsMessage={() => `Find a ${Object.keys(STELLAR.entities[context.entity_type].fields[cell.column.id].params.constraints).join(". ")} by typing its name.`}
+            placeholder={null}
+            className='RG_MULTIENTITY_LISTFIELD'
+            classNames={{
+                menuList: () => "RG_MULTIENTITY_LISTDROP",
+                option: () => "RG_MULTIENTITY_LIST_ITEM",
+                noOptionsMessage: () => "RG_MULTIENTITY_LIST_ITEM",
+                multiValue: () => "RG_MULTIENTITY_SELECTION",
+                multiValueLabel: () => "RG_MULTIENTITY_SELECTION_LABEL",
+                multiValueRemove: () => "RG_MULTIENTITY_SELECTION_LABEL_CLOSE"
+            }}
+            styles={{
+                control: base => ({
+                    ...base,
+                    height: 'fit-content',
+                    minHeight: 18
+                }),
+                dropdownIndicator: () => ({
+                    visibility: "hidden",
+                    width: 0
+                }),
+                option: (base, state) => ({
+                    ...base,
+                    backgroundColor: state.isFocused ? "var(--RG_HIGHLIGHT_GREY)": ""  // Needs to be here to enable keyboard navigation
+                })
+            }}
+            onKeyDown={(event) => {
+                if (event.key == "Escape"){
+                    setEditable(false)
+                }
+                else if (event.key == "Enter" && ment.current.getFocusableOptions().length==0){  // TODO Sus
+                    let fakeEvent = {
+                        target: {
+                            parentNode: document.getElementsByName("SELECT_GRIDMULTIENT_STELLAR_HACK")[0].parentNode.parentNode.parentNode
+                        }
+                    }
+                    let newvalue = ment.current.getValue().map(ent => JSON.parse(ent.value))
+                    updateRG(fakeEvent, cell, newvalue.length ? newvalue : null, context)
+                    setEditable(false)
+                }
+            }}
+        />
+    )
+    :
+    (<div
+        className="RG_GRID_DISPLAYCELL"
+        onDoubleClick={() => {
+            setEditable(true)
+        }}
+    >
+        {(cell.getValue() || []).map(entity => (
+            entity[STELLAR["entities"][entity.type].display_name_col]
+        )).join(', ')}
+    </div>)
 }
 
 function RG_ENTITY (cell, context) {
@@ -87,8 +251,7 @@ function RG_GRID_CELL_HIDDEN ({...rest}) {
 
 
 function updateRG(event, cell, newvalue, context){
-    console.log(newvalue)
-    if (cell.getValue() == newvalue) {
+    if ((cell.getValue() == newvalue)||(!cell.getValue() && !newvalue)) {
         // No actual data changed
         return
     }
@@ -125,13 +288,7 @@ function updateRG(event, cell, newvalue, context){
                 console.log(response)
             }
         })
-    // console.log(context.schema)
-    // console.log(context.entity_type)
-    // console.log(cell.row.original.uid)
-    // console.log(cell.column.id)
-    // console.log(newvalue)
 }
-
 
 function formatTableRow (row) {
     return (
@@ -152,16 +309,11 @@ function formatTableCell(cell) {
         <td
             className={"RG_GRID_CELL"}
             key={cell.id}
-            onClick={()=> {
-                cell.setEditable ? cell.setEditable(true) : null
-            }}
         >
-            {/* <div> TODO Set edit icon</div> */}
             {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </td>
     )
 }
-
 
 function formatHeaderResizer(header) {
     return (

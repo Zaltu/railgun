@@ -53,25 +53,3 @@
     gap: 5px;
 }
 
-
-
-
-/* INPUT OVERRIDES */
-/* textarea:focus, input[type="string"]:focus {
-    outline: 2px solid orange;
-}
-
-input[type="radio"] {
-    accent-color: orange;
-} */
-
-input, textarea{
-    text-indent: 3px;
-    background-color: var(--RG_HIGHLIGHT_GREY);
-    color: var(--RG_TEXT_GREY);
-    accent-color: orange;
-}
-
-textarea {
-    padding-top: 3px;
-}

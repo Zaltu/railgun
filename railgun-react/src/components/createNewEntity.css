@@ -15,7 +15,7 @@
     background-color: var(--RG_ITEM_GREY);
     box-shadow: 0px 0px 25px 0px black;
     border-radius: 5px;
-    
+
     font-size: larger;
     color: var(--RG_TEXT_GREY);
 }
@@ -25,8 +25,9 @@
 }
 
 .RG_NEWENTITY_FORMCHUNK {
-    display: grid;
-    grid-template-columns: auto auto;
+    display: flex;
+    flex-direction: column;
+    height: auto;
 }
 
 .RG_NEWENTITY_LABELSIDE {
@@ -38,6 +39,16 @@
 .RG_NEWENTITY_INPUTSIDE {
     display: flex;
     align-items: center;
+    padding: 0 0 7.5px;
+    min-height: 25px;
+    width: 20vw;
+}
+
+.RG_NEWENTITY_EDITCELL {
+    display: flex;
+    height: 27.5px;
+    width: inherit;
+    font-size: 0.95rem;
 }
 
 
@@ -47,13 +58,73 @@
 }
 
 
-input, textarea{
-    text-indent: 3px;
+.RG_EMBEDDED_LISTFIELD {
+    font-size: 0.95rem;
+    width: 100%;
     background-color: var(--RG_HIGHLIGHT_GREY);
-    color: var(--RG_TEXT_GREY);
-    accent-color: orange;
+    text-indent: 3px;
 }
 
-textarea {
-    padding-top: 3px;
+.RG_EMBEDDED_LISTDROP {
+    background-color: var(--RG_ITEM_GREY);
+    box-shadow: 0px 1px 4px 0px black;
+    color: var(--RG_TEXT_GREY);
+
+    width: fit-content;
+    min-width: 100%;
+    white-space: nowrap;
+
+    margin-left: 1px;
+}
+
+
+
+.RG_MULTIENTITY_LISTFIELD {
+    font-size: 0.95rem;
+    width: 100%;
+    background-color: var(--RG_HIGHLIGHT_GREY);
+    text-indent: 3px;
+    padding: 2px 0 2px 2px;
+}
+
+.RG_MULTIENTITY_LISTDROP {
+    background-color: var(--RG_ITEM_GREY);
+    box-shadow: 0px 1px 4px 0px black;
+    color: var(--RG_TEXT_GREY);
+
+    width: fit-content;
+    min-width: 100%;
+    white-space: nowrap;
+}
+
+.RG_MULTIENTITY_LIST_ITEM {
+    padding: 10px 5px 10px 5px;
+    background-color: var(--RG_ITEM_GREY);
+}
+
+
+
+.RG_MULTIENTITY_SELECTION {
+    padding: -1px 0px -1px 0px;
+    margin: 2px 1px 2px 1px;
+    background-color: var(--RG_ITEM_GREY);
+    /* border: 1px solid red; */
+    border-radius: 15px;
+}
+
+.RG_MULTIENTITY_SELECTION_LABEL {
+    padding-left: 10px;
+    padding-right: 3px;
+}
+
+
+.RG_MULTIENTITY_SELECTION_LABEL_CLOSE {
+    padding-right: 5px;
+    padding-left: 2px;
+    border-radius: 0 15px 15px 0;
+}
+
+
+.RG_MULTIENTITY_SELECTION_LABEL_CLOSE:hover {
+    background-color: var(--RG_HIGHLIGHT_GREY);
 }

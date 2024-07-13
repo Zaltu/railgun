@@ -23,6 +23,17 @@ class PSQL(Database):
         "JSON": "JSONB",
         "DATE": "DATE"
     }
+    FILTER_OPTIONS = {
+        "is": lambda field, value: sql.Identifier(field) + sql.SQL(" = ") + sql.Literal(value),
+        "is_not": lambda field, value: sql.Identifier(field) + sql.SQL(" != ") + sql.Literal(value),
+        "contains": lambda field, value: sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value+"%%"),
+        "not_contains": lambda field, value: sql.Identifier(field) + sql.SQL(" NOT ILIKE ") + sql.Literal("%%"+value+"%%"),
+        "starts_with": lambda field, value: sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal(value+"%%"),
+        "ends_with": lambda field, value: sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value),
+        #"in": "", TODO
+        "greater_than": lambda field, value: sql.Identifier(field) + sql.SQL(" > ") + sql.Literal(value),
+        "less_than": lambda field, value: sql.Identifier(field) + sql.SQL(" < ") + sql.Literal(value)
+    }
     def __init__(self, config_params):
         # Prep config
         self.connection_params = self._load_config(config_params)
@@ -428,8 +439,17 @@ class PSQL(Database):
 #####################################
 def _build_filters(filters, table):
     """
+    Build the WHERE statement of a query.
+    See Railgun docs for filter format.
+
+    :param dict filters: Railgun filters
+    :param str table: current table
+
+    :returns: WHERE statement
+    :rtype: psycopg.sql.SQL
     """
-    return sql.SQL("")
+    print(filters)
+    return sql.SQL("WHERE ") + _rec_filter_con(sql.SQL(""), filters) if filters else sql.SQL("")
 
 
 def _build_return_fields(return_fields, table, entity_type):
@@ -534,3 +554,28 @@ def _build_joins(joins, table):
                 ftypename=sql.Identifier(joins["displaycols"][ftype])
             )
     return baseRTJoin
+
+
+
+def _rec_filter_con(straight, filter):
+    """
+    Recursive function to decompose the Railgun filter syntax into PSQL WHERE statements.
+    See Railgun docs for expected filter format.
+
+    :param str straight: previous deconstructed filter
+    :param dict|list filter: this section's filter config
+
+    :returns: this section and below's deconstructed, PSQL-compliant WHERE statement
+    :rtype: psycopg.sql.SQL
+    """
+    simpletons = []
+    for subfilter in filter["filters"]:
+        if isinstance(subfilter, dict):
+            simpletons.append(_rec_filter_con(straight, subfilter))
+        else:
+            simpletons.append(
+                ### We assume receiving an element of format [<field>, <filter_operation>, <value>]
+                PSQL.FILTER_OPTIONS[subfilter[1]](subfilter[0], subfilter[2])
+            )
+    straight += sql.SQL(" "+filter["filter_operator"]+" ").join(simpletons)
+    return straight
