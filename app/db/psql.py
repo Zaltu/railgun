@@ -24,15 +24,15 @@ class PSQL(Database):
         "DATE": "DATE"
     }
     FILTER_OPTIONS = {
-        "is": lambda field, value: sql.Identifier(field) + sql.SQL(" = ") + sql.Literal(value),
-        "is_not": lambda field, value: sql.Identifier(field) + sql.SQL(" != ") + sql.Literal(value),
-        "contains": lambda field, value: sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value+"%%"),
-        "not_contains": lambda field, value: sql.Identifier(field) + sql.SQL(" NOT ILIKE ") + sql.Literal("%%"+value+"%%"),
-        "starts_with": lambda field, value: sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal(value+"%%"),
-        "ends_with": lambda field, value: sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value),
+        "is": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" = ") + sql.Literal(value),
+        "is_not": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" != ") + sql.Literal(value),
+        "contains": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value+"%%"),
+        "not_contains": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" NOT ILIKE ") + sql.Literal("%%"+value+"%%"),
+        "starts_with": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal(value+"%%"),
+        "ends_with": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value),
         #"in": "", TODO
-        "greater_than": lambda field, value: sql.Identifier(field) + sql.SQL(" > ") + sql.Literal(value),
-        "less_than": lambda field, value: sql.Identifier(field) + sql.SQL(" < ") + sql.Literal(value)
+        "greater_than": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" > ") + sql.Literal(value),
+        "less_than": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" < ") + sql.Literal(value)
     }
     def __init__(self, config_params):
         # Prep config
@@ -273,7 +273,7 @@ class PSQL(Database):
 
 
     ### DATA ###
-    def query(self, table, entity_type, fields, joins, filters, pagination=0, page=1, order="id"):
+    def query(self, table, entity_type, fields, joins, filters, pagination=0, page=1, order="uid"):
         """
         Run an optimized (TODO lol) guery.
         """
@@ -309,6 +309,42 @@ class PSQL(Database):
         )
         print(COMMAND.as_string(self.database))  # TODO log
         return self._run_command(COMMAND, (pagination, (page*pagination)-pagination))
+
+
+    def count(self, table, filters):
+        """
+        Run an optimized (TODO lol) guery.
+        """
+        # Prep all JOINs
+        # TODO, since filters on joined tables would have an effect, but that's not in place right now.
+        baseRTJoin = sql.SQL("")
+        # baseRTJoin = _build_joins(joins, table)
+        
+        # Groups are needed in case grouping causes duplication, which increases count...
+        baseGroup = sql.SQL("")
+        # if joins:
+        #     baseGroup += sql.SQL("GROUP BY {table}.{uid}").format(
+        #         table=sql.Identifier(table),
+        #         uid=sql.Identifier("uid")
+        #     )
+
+        # Prep all filters
+        baseFilter = _build_filters(filters, table)
+
+        COMMAND = sql.SQL("""
+            SELECT count(*) as total_count
+            FROM {table}
+            {joins}
+            {filters}
+            {group}
+        """).format(
+            table=sql.Identifier(table),
+            joins=baseRTJoin,
+            filters=baseFilter,
+            group=baseGroup
+        )
+        print(COMMAND.as_string(self.database))  # TODO log
+        return self._run_command(COMMAND, return_style="solo")
 
 
     def create(self, op, conn):
@@ -449,7 +485,7 @@ def _build_filters(filters, table):
     :rtype: psycopg.sql.SQL
     """
     print(filters)
-    return sql.SQL("WHERE ") + _rec_filter_con(sql.SQL(""), filters) if filters else sql.SQL("")
+    return sql.SQL("WHERE ") + _rec_filter_con(sql.SQL(""), filters, table) if filters else sql.SQL("")
 
 
 def _build_return_fields(return_fields, table, entity_type):
@@ -557,13 +593,14 @@ def _build_joins(joins, table):
 
 
 
-def _rec_filter_con(straight, filter):
+def _rec_filter_con(straight, filter, table):
     """
     Recursive function to decompose the Railgun filter syntax into PSQL WHERE statements.
     See Railgun docs for expected filter format.
 
     :param str straight: previous deconstructed filter
-    :param dict|list filter: this section's filter config
+    :param dict|list filter: this section's filter config\
+    :param str table: this table's code
 
     :returns: this section and below's deconstructed, PSQL-compliant WHERE statement
     :rtype: psycopg.sql.SQL
@@ -575,7 +612,8 @@ def _rec_filter_con(straight, filter):
         else:
             simpletons.append(
                 ### We assume receiving an element of format [<field>, <filter_operation>, <value>]
-                PSQL.FILTER_OPTIONS[subfilter[1]](subfilter[0], subfilter[2])
+                # HACK subfilter[4] never exists. Filters currently only work on the top level table, not joined tables
+                PSQL.FILTER_OPTIONS[subfilter[1]](table if len(subfilter)==3 else subfilter[4], subfilter[0], subfilter[2])
             )
     straight += sql.SQL(" "+filter["filter_operator"]+" ").join(simpletons)
     return straight

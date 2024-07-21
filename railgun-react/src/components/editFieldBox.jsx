@@ -68,7 +68,7 @@ function hideSelf(form, displayState) {
 
 function EditFieldWindow(props) {
     return (
-        <div className='RG_EDIT_FIELD_WINDOW' style={{visibility: props.display}}>
+        <div className='RG_EDIT_FIELD_WINDOW'>
             <form autoComplete='off' onSubmit={(event) => createField(event, props.context, props.displaySelf)}>
                 <div name="identifyChunk" className='RG_NEWFIELD_IDENTIFY_CHUNK RG_NEWFIELD_CHUNK'>
                     <span>New Field Name</span>

@@ -7,6 +7,14 @@ from src.stellar_stellar import StellarStellar
 from db._database import CUDError
 
 
+_DEFAULT_QUERY_FILTER = lambda request:{
+    "filter_operator": "AND",
+    "filters": [
+        ["_ss_archived", "is", bool(request["read"].get("show_archived", False))],  # Some hubris to allow proper parsing of false values
+    ]
+}
+
+
 class Railgun(FastAPI):
     """
     Kaboom.
@@ -72,13 +80,22 @@ class Railgun(FastAPI):
             }
         }
         """
+        # Preformatting default archived filter
+        FILTERS = _DEFAULT_QUERY_FILTER(request)
+        if request["read"].get("filters"):
+            FILTERS["filters"].append(request["read"]["filters"])
+
         schema_sc = self.STELLAR.STELLAR[request["schema"]]["entities"]
         table_sc = schema_sc[request["entity"]]["fields"]
         return_fields = []
         joins = {"ENTITY":{}, "MULTIENTITY": {}}
+
+        # Ensure return_fields exists
+        request["read"]["return_fields"] = request["read"].get("return_fields") or []
         if "uid" not in request["read"]["return_fields"]:
             request["read"]["return_fields"].append("uid")
-        for field in request["read"].get("return_fields") or ["uid"]:
+
+        for field in request["read"]["return_fields"]:
             if table_sc[field]["type"] == "ENTITY":
                 joins["ENTITY"][field] = table_sc[field]["params"]["constraints"].values()
                 for ftype in table_sc[field]["params"]["constraints"]:
@@ -91,17 +108,21 @@ class Railgun(FastAPI):
                     return_fields.append((table_sc[field]["params"]["constraints"][ftype]["relation"], field))
             else:
                 return_fields.append((schema_sc[request["entity"]]["code"], field))
+        print(request)
         target = self.data[request["schema"]]
         resp = target.query(
             table=schema_sc[request["entity"]]["code"],
             entity_type=schema_sc[request["entity"]]["soloname"],
             fields=return_fields,
             joins=joins,
-            filters=request["read"].get("filters"),
+            filters=FILTERS,
             pagination=request["read"].get("pagination") or 25,
             page=request["read"].get("page") or 1,
-            order=request["read"].get("order") or "uid"
+            order=request["read"].get("order") or "uid",
         )
+        if bool(request["read"].get("include_count", False)):
+            query_total_count = target.count(schema_sc[request["entity"]]["code"], FILTERS)
+            resp.append(query_total_count)
         return resp
 
 
@@ -276,6 +297,9 @@ class Railgun(FastAPI):
         update_rel = []
         # We need to perform extra actions on some field types (list, entity), alas
         for update_field in list(op["data"].keys()):  # HACK allow us to pop for entity fields
+            # Assume archival stuff is managed properly. Someone could meme it potentially though.
+            if update_field == "_ss_archived":
+                continue
             stellar_field = self.STELLAR.STELLAR[op["schema"]]["entities"][op["entity"]]["fields"][update_field]
             # Validate list ops
             if stellar_field["type"] == "LIST":
@@ -338,6 +362,7 @@ class Railgun(FastAPI):
             "schema": <schema>,
             "entity": <entity>,
             "entity_id": <id of entity to update>,
+            "permanent": any | if this key is present, entity will be purged, not just archived
         }
 
         :param dict request: deletion request
@@ -348,7 +373,11 @@ class Railgun(FastAPI):
         db = self.data[request["schema"]]
         request["table"] = self.STELLAR.STELLAR[request["schema"]]["entities"][request["entity"]]["code"]
         with db.stage() as conn:
-            result = self._delete(db, request, conn)
+                if bool(request.get("permanent", False)):  # Some hubris to allow proper parsing of false values
+                    result = self._delete(db, request, conn)
+                else:
+                    request["data"] = {"_ss_archived": True}
+                    result = self._update(db, request, conn)
         return result
 
     def _delete(self, db, op, conn):

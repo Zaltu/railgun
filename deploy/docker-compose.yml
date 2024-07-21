@@ -2,7 +2,7 @@ services:
   stellardb:
     image: postgres:16
     ports:
-      - "127.0.0.1:7979:5432"
+      - "127.0.0.1:6969:5432"
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_USER: railgun

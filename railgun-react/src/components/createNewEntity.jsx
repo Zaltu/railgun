@@ -1,7 +1,7 @@
 import Select from 'react-select'
 import AsyncSelect from 'react-select/async'
 
-import { STELLAR, fetchAutocompleteOptions } from '../STELLAR'
+import { STELLAR, fetchRGData, fetchAutocompleteOptions } from '../STELLAR'
 
 import './createNewEntity.css'
 import { useRef } from 'react'
@@ -17,7 +17,7 @@ const TYPE_DISPLAY_ELEMENTS = {
     "DATE": RG_DEFAULTCELL,  // TODO datepicker
     "LIST": RG_LISTSELECT,
     "MULTIENTITY": RG_MULTIENTITY,
-    //"ENTITY": RG_ENTITY_DISPLAY
+    "ENTITY": RG_ENTITY
 }
 
 
@@ -126,35 +126,82 @@ function RG_MULTIENTITY (required, code, options, refs, extras) {
     )
 }
 
+function RG_ENTITY (required, code, options, refs, extras) {
+    return (
+        <AsyncSelect
+            unstyled
+            required={required}
+            ref={(el => refs.current[extras.refi] = el)}
+            name={code}
+            id={code}
+            cacheOptions
+            loadOptions={(inputValue) => {
+                return fetchAutocompleteOptions(options, inputValue)
+            }}
+            noOptionsMessage={() => `Find a ${Object.keys(options).join(". ")} by typing its name.`}
+            placeholder={null}
+            className='RG_MULTIENTITY_LISTFIELD'
+            classNames={{
+                menuList: () => "RG_MULTIENTITY_LISTDROP",
+                option: () => "RG_MULTIENTITY_LIST_ITEM",
+                noOptionsMessage: () => "RG_MULTIENTITY_LIST_ITEM",
+                multiValue: () => "RG_MULTIENTITY_SELECTION",
+                multiValueLabel: () => "RG_MULTIENTITY_SELECTION_LABEL",
+                multiValueRemove: () => "RG_MULTIENTITY_SELECTION_LABEL_CLOSE"
+            }}
+            styles={{
+                control: base => ({
+                    ...base,
+                    height: 'fit-content',
+                    minHeight: 27.5
+                }),
+                dropdownIndicator: base => ({
+                    visibility: "hidden",
+                    width: 0
+                }),
+                option: (base, state) => ({
+                    ...base,
+                    backgroundColor: state.isFocused ? "var(--RG_HIGHLIGHT_GREY)": ""  // Needs to be here to enable keyboard navigation
+                })
+            }}
+        />
+    )
+}
 
-async function createEntity(e, context, displaySelf, resetables) {
+async function createEntity(e, context, displaySelf, resetables, updateData) {
     e.preventDefault()
     let formData = new FormData(e.target)
     let data = {}
     let resetableids = resetables.current.map(resetable => resetable.props.id)
     for (const ent of formData.entries()) {
         if (ent[1] && !(resetableids.includes(ent[0])) ) {
-            console.log("Valid")
             data[ent[0]] = ent[1]=="true" ? true: ent[1]  // HACK fucking webdevs
         }
     }
     // Manage all the resetables separately because of react-select's value management
     resetables.current.forEach((resetable) => {
         if (STELLAR.entities[context.entity_type].fields[resetable.props.id].type=="MULTIENTITY") {
-            let multillist = []
-            resetable.getValue().map(ent => multillist.push(JSON.parse(ent.value)))
-            data[resetable.props.id] = multillist
+            let multillist = resetable.getValue().map(ent => multillist.push(JSON.parse(ent.value)))
+            if (multillist.length){
+                data[resetable.props.id] = multillist
+            }
         }
         else if (STELLAR.entities[context.entity_type].fields[resetable.props.id].type=="ENTITY") {
-            data[resetable.props.id] = JSON.parse(resetable.getValue()[0].value)
+            if (resetable.getValue()[0]) {
+                data[resetable.props.id] = JSON.parse(resetable.getValue()[0].value)
+            }
         }
         else if (STELLAR.entities[context.entity_type].fields[resetable.props.id].type=="LIST") {
-            data[resetable.props.id] = resetable.getValue()[0].value
+            if (resetable.getValue()[0]) {
+                data[resetable.props.id] = resetable.getValue()[0].value
+            }
         }
         else {
             console.error(`UNDEFINED BEHAVIOR FOR ${resetable.props.id}, IGNORING`)
         }
     })
+
+    
 
     let CREATE_REQUEST = {
         schema: context.schema,
@@ -171,6 +218,7 @@ async function createEntity(e, context, displaySelf, resetables) {
         .then((response) => {
             if (response.ok) {
                 console.log("CREATED!!!!")
+                updateData()
                 hideSelf(e.target, displaySelf, resetables)
             } else {
                 console.error(response)
@@ -217,9 +265,9 @@ function NewEntityWindow(props) {
     const refs = useRef([])
     return (
         <div className='RG_NEWENTITY_WINDOW'>
-            <form autoComplete='off' onSubmit={(event) => createEntity(event, props.context, props.displaySelf, refs)}>
+            <form autoComplete='off' onSubmit={(event) => createEntity(event, props.context, props.displaySelf, refs, props.updateData)}>
                 <div name="formChunk" className='RG_NEWENTITY_CHUNK RG_NEWENTITY_FORMCHUNK'>
-                    {...prepFieldElements(props.context.entity_type, refs)}
+                    {...prepFieldElements(props.context.entity_type, refs, props.setData)}
                 </div>
                 <div name="applyChunk" className='RG_NEWENTITY_APPLY_CHUNK RG_NEWENTITY_CHUNK'>
                     <button 

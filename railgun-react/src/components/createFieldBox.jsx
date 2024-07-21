@@ -1,4 +1,5 @@
 import {useState} from 'react'
+import { STELLAR, telescope } from '../STELLAR'
 import './createFieldBox.css'
 
 
@@ -35,7 +36,7 @@ function _formattedFieldCode(value, setCode) {
 }
 
 
-async function createField(e, fieldtype, context, setFieldCode, displayState) {
+async function createField(e, fieldtype, context, setFieldCode, displayState, addDisplayField) {
     e.preventDefault()
     let formData = e.target
     let CREATE_REQUEST = {
@@ -60,6 +61,8 @@ async function createField(e, fieldtype, context, setFieldCode, displayState) {
         .then((response) => {
             if (response.ok) {
                 console.log("CREATED!!!!")
+                // Stellar can be too slow here...
+                //addDisplayField(formData.fieldcode.value)
                 hideSelf(formData, setFieldCode, displayState)
             } else {
                 console.log(response)
@@ -81,8 +84,8 @@ function NewFieldWindow(props) {
     const [fieldtype, setFieldType] = useState(null)
     
     return (
-        <div className='RG_NEW_FIELD_WINDOW' style={{visibility: props.display}}>
-            <form autoComplete='off' onSubmit={(event) => createField(event, fieldtype, props.context, setPredictedFieldCode, props.displaySelf)}>
+        <div className='RG_NEW_FIELD_WINDOW'>
+            <form autoComplete='off' onSubmit={(event) => createField(event, fieldtype, props.context, setPredictedFieldCode, props.displaySelf, props.addDisplayField)}>
                 <div name="identifyChunk" className='RG_NEWFIELD_IDENTIFY_CHUNK RG_NEWFIELD_CHUNK'>
                     <span>New Field Name</span>
                     <input required name="fieldname" type='string' onChange={(e) => _formattedFieldCode(e.target.value, setPredictedFieldCode)} />

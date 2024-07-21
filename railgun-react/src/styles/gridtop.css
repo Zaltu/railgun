@@ -1,7 +1,13 @@
 .RG_GRIDTOP_BG {
     display: flex;
+    justify-content: space-between;
+    padding: 0 20px;
+    background-color: var(--RG_ITEM_GREY);
+}
+
+.RG_GRIDTOP_CHUNK {
+    display: flex;
     gap: 25px;
-    padding-left: 25px;
     background-color: var(--RG_ITEM_GREY);
 }
 
@@ -53,3 +59,17 @@
     background-color: var(--RG_HIGHLIGHT_GREY);
 }
 
+.RG_SIMPLE_SEARCHBOX {
+    display: flex;
+    align-self: center;
+    height: 30px;
+    max-height: 30px;
+    border-radius: 20px;
+    border: 1px solid var(--RG_TEXT_GREY);
+    text-indent: 10px;
+}
+
+
+.RG_SIMPLE_SEARCHBOX:focus {
+    border-color: transparent;
+}

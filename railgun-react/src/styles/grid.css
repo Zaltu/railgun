@@ -1,14 +1,14 @@
-.RG_GRID_TABLE {
-    border-collapse: collapse;
-}
-
 .RG_GRID_BG {
     background-color: black;
-    height: 85vh;
+    /* height: 85vh; */
     bottom: 0px;
     width: 100%;
     overflow-x: auto;
     overflow-y: auto;
+}
+
+.RG_GRID_TABLE {
+    border-collapse: collapse;
 }
 
 .RG_GRID_ROW {

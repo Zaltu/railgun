@@ -12,6 +12,32 @@ async function telescope(schema, entity, setGlobal=true) {
     return LOCAL_STELLAR
 }
 
+
+async function fetchRGData(entity_type, fields, filters=null, schema=null) {
+    if (schema) {
+        await telescope(schema)
+    }
+
+    let fetch_data = {
+        "schema": schema||STELLAR.code,
+        "entity": entity_type,
+        "read": {
+                "filters": filters ? filters : null,
+                "return_fields": fields,
+                "pagination": 100
+        }
+    }
+
+    const rg_data = await (await fetch("http://127.0.0.1:8888/read", {
+        mode:"cors",
+        method: "POST",
+        body: JSON.stringify(fetch_data)
+    })).json()
+
+    return rg_data
+}
+
+
 async function fetchAutocompleteOptions(fieldConstraints, input) {
     let allOptions = []
     await Promise.all(Object.keys(fieldConstraints).map(async (possibleType) => {
@@ -46,4 +72,5 @@ async function fetchAutocompleteOptions(fieldConstraints, input) {
     return allOptions
 }
 
-export {STELLAR, telescope, fetchAutocompleteOptions};
+
+export {STELLAR, telescope, fetchRGData, fetchAutocompleteOptions};
