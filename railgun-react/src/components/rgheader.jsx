@@ -63,7 +63,7 @@ function RGHeader(props) {
         <div style={{...props.style}} className="RG_HEADER">
             <div className="RG_HEADER_TOP">
                 <div className='RG_HEADER_TOPLEFT'>
-                    <img style={{height: '18px'}} src='/src/assets/railguntemplogo.png' />
+                    <img style={{maxHeight: '20px'}} src='/src/assets/railguntemplogo.png' />
                     <RGDropDown button='Schema' options={getSchemaOptions(props.setcontext)} />
                 </div>
                 <div>

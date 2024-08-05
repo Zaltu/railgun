@@ -13,7 +13,7 @@ async function telescope(schema, entity, setGlobal=true) {
 }
 
 
-async function fetchRGData(entity_type, fields, filters=null, schema=null) {
+async function fetchRGData(entity_type, fields, filters=null, page=1, schema=null) {
     if (schema) {
         await telescope(schema)
     }
@@ -24,7 +24,9 @@ async function fetchRGData(entity_type, fields, filters=null, schema=null) {
         "read": {
                 "filters": filters ? filters : null,
                 "return_fields": fields,
-                "pagination": 100
+                "page": page,
+                "pagination": 100,
+                "include_count": true
         }
     }
 

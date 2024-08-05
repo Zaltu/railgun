@@ -2,7 +2,6 @@ import Select, {components} from 'react-select'
 import '/src/components/dropdown.css'
 
 
-
 const Group = (props) => (
     <div>
         <components.Group {...props} />
@@ -40,7 +39,14 @@ function RGDropDown (props) {
             classNames={{
                 menuList: () => "RG_DROPDOWN_LIST",
                 group: () => "RG_DROPDOWN_GROUP",
-                option: () => "RG_DROPDOWN_LIST_ITEM"
+                option: () => "RG_DROPDOWN_LIST_ITEM",
+            }}
+            styles={{
+                control: (base) => ({
+                    ...base,
+                    minHeight: "fit-content",
+                    padding: "0.3rem 0.2rem"
+                })
             }}
             isSearchable={false}
             

@@ -3,12 +3,14 @@
     justify-content: space-between;
     padding: 0 20px;
     background-color: var(--RG_ITEM_GREY);
+    overflow: hidden;
 }
 
 .RG_GRIDTOP_CHUNK {
     display: flex;
-    gap: 25px;
+    gap: 20px;
     background-color: var(--RG_ITEM_GREY);
+    align-items: center;
 }
 
 

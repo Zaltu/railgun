@@ -1,6 +1,7 @@
 
 .RG_HEADER {
     display: block;
+    overflow: hidden;
 }
 
 .RG_HEADER_TOP {
@@ -8,7 +9,7 @@
     justify-content: space-between;
     align-items: center;
 
-    height: 50%;
+    min-height: 50%;
 
     background-color: var(--RG_HEADER_GREY);
     color: var(--RG_TEXT_GREY);
@@ -30,7 +31,7 @@
     background-color: var(--RG_ITEM_GREY);
     color: var(--RG_TEXT_GREY);
 
-    height: 50%;
+    min-height: 50%;
 
     padding-left: 15px;
     padding-right: 15px;

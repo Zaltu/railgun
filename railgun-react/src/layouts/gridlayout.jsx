@@ -6,6 +6,7 @@ import AsyncSelect from 'react-select/async'
 import {RGHeader} from '../components/rgheader.jsx'
 import Gridtop from './grid/gridtop.jsx'
 import Grid from './grid/grid.jsx'
+import {GridBottom} from "./grid/gridbottom.jsx"
 
 import { NewFieldWindow } from "/src/components/createFieldBox.jsx"
 import { EditFieldWindow } from "../components/editFieldBox.jsx"
@@ -326,11 +327,12 @@ function RG_GRID_CELL_HIDDEN ({...rest}) {
     )
 }
 
-function updateRG(event, cell, newvalue, context){
-    if ((cell.getValue() == newvalue)||(!cell.getValue() && !newvalue)) {
+async function updateRG(event, cell, newvalue, context){
+    if ((cell.getValue() === newvalue)||(cell.getValue() != 0 && !cell.getValue() && !newvalue)) {
         // No actual data changed
         return
     }
+    newvalue = newvalue ? newvalue : null  // Prevent number values from being set to '' instead of empty
     cell.getContext().table.options.meta.updateData(
         cell.row.index,
         cell.column.id,
@@ -427,8 +429,11 @@ async function updateFieldsOnCreate(context, oldfields, setFields, newfield) {
     await telescope(context.schema)
     setFields(oldfields+[STELLAR.entities[context.entity_type].fields[newfield]])
 }
-async function updateGridData(context, fields, filters, setData) {
-    setData(await fetchRGData(context.entity_type, Object.keys(fields), filters))
+
+async function updateGridData(context, fields, filters, page, setData, setCount) {
+    let rg_data = await fetchRGData(context.entity_type, Object.keys(fields), filters, page)
+    setCount(rg_data.pop(-1)["total_count"])  // Count is always fetched in the webui.
+    setData(rg_data)
 }
 
 
@@ -444,6 +449,8 @@ function GridLayout(props) {
     const [filters, setFilters] = useState(null)
     const [headers, setHeaders] = useState(formatHeaders(fields, context))  // TODO Show/Hide
     const [searchValue, setSearchValue] = useState(null)
+    const [count, setCount] = useState(71)
+    const [page, setPage] = useState(1)
 
     const tableref = useRef()
 
@@ -457,7 +464,7 @@ function GridLayout(props) {
     // TODO is data needed?
     useEffect(()=>{
         setHeaders(formatHeaders(fields, context))
-        updateGridData(context, fields, filters, setData)
+        updateGridData(context, fields, filters, page, setData, setCount)
         // We update the data in case there's a default field value or something,
         // but the selection doesn't need to be changed purely because a field was added.
         // tableref.current.resetRowSelection()
@@ -465,9 +472,17 @@ function GridLayout(props) {
 
     // When filters change, update data
     useEffect(() => {
-        updateGridData(context, fields, filters, setData)
+        updateGridData(context, fields, filters, page, setData, setCount)
         tableref.current.resetRowSelection()  // Clear selection as it's independent of table indexing
     }, [filters])
+
+    // When page changes, update data
+    useEffect(() => {
+        // HACK doing like this means that the count gets updated even if all that changes is the page
+        // ...but it's convenient
+        updateGridData(context, fields, filters, page, setData, setCount)
+        tableref.current.resetRowSelection()  // Clear selection as it's independent of table indexing
+    }, [page])
 
     // When defaultSearch changes, change filters
     useEffect(() =>  {
@@ -485,9 +500,10 @@ function GridLayout(props) {
 
     return STELLAR!=null ? (
         <div>
-            <RGHeader style={{minHeight: "8vh"}} context={context} setcontext={setContext} />
-            <Gridtop style={{minHeight: "5vh"}} context={context} fields={fields} setSearchValue={setSearchValue} showFieldCreationWindow={showFieldCreation} showEntityCreationWindow={showEntityCreation} />
-            <Grid style={{height: "85vh"}} context={context} data={data} setData={setData} headers={headers} showFieldEditWindow={showFieldEdit} setSelectedField={setSelectedField} tableref={tableref} updateData={() => {updateGridData(context, fields, filters, setData);tableref.current.resetRowSelection()}} />
+            <RGHeader style={{minHeight: "8vh", height: "8vh"}} context={context} setcontext={setContext} />
+            <Gridtop style={{minHeight: "4.5vh", height: "4.5vh"}} context={context} fields={fields} setSearchValue={setSearchValue} showFieldCreationWindow={showFieldCreation} showEntityCreationWindow={showEntityCreation} />
+            <Grid style={{minHeight: "85vh", height: "85vh"}} context={context} data={data} setData={setData} headers={headers} showFieldEditWindow={showFieldEdit} setSelectedField={setSelectedField} tableref={tableref} updateData={() => {updateGridData(context, fields, filters, setData);tableref.current.resetRowSelection()}} />
+            <GridBottom style={{minHeight: "2.5vh", height: "2.5vh"}} context={context} count={count} page={page} setPage={setPage} />
             {fieldCreateVisible ? <NewFieldWindow context={context} addDisplayField={(newfield)=> updateFieldsOnCreate(context, fields, setFields, newfield)} displaySelf={showFieldCreation} /> : null }
             {fieldEditVisible ? <EditFieldWindow context={context} displaySelf={showFieldEdit} field={selectedFieldData} /> : null }
             {entityCreateVisible ? <NewEntityWindow context={context} updateData={() => {updateGridData(context, fields, filters, setData);tableref.current.resetRowSelection()}} displaySelf={showEntityCreation} /> : null }

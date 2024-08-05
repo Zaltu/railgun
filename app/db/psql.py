@@ -608,7 +608,7 @@ def _rec_filter_con(straight, filter, table):
     simpletons = []
     for subfilter in filter["filters"]:
         if isinstance(subfilter, dict):
-            simpletons.append(_rec_filter_con(straight, subfilter))
+            simpletons.append(_rec_filter_con(straight, subfilter, table))
         else:
             simpletons.append(
                 ### We assume receiving an element of format [<field>, <filter_operation>, <value>]

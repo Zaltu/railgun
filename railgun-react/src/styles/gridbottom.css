@@ -1,0 +1,50 @@
+.RG_GRID_BOTTOM {
+    display: flex;
+
+    background-color: var(--RG_ITEM_GREY);
+    justify-content: space-between;
+    align-items: center;
+    color: var(--RG_TEXT_GREY);
+    font-size: smaller;
+
+    padding-right: 5px;
+
+    box-sizing: border-box;  /*Prevents border from fucking with the height*/
+    border-top: 1px solid var(--RG_TEXT_GREY);
+}
+
+.RG_PAGESWITCHER {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+}
+
+
+.RG_PAGESWITCHER_BUTTON {
+    height: 100%;
+    background-color: transparent;
+    cursor: pointer;
+    fill: var(--RG_TEXT_GREY);
+}
+.RG_PAGESWITCHER_BUTTON:disabled {
+    cursor: default;
+    fill: transparent;
+}
+
+.RG_PAGESWITCHER_INPUT {
+    width: 3ch;
+    font-size: smaller;
+    justify-self: center;
+    accent-color: transparent;
+    outline: none;
+}
+.RG_PAGESWITCHER_INPUT::placeholder {
+    color: var(--RG_TEXT_GREY);
+    opacity: 100;
+}
+
+
+.RG_PAGESWITCHER_SVG {
+    height: 100%;
+}
