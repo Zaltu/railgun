@@ -1,7 +1,7 @@
 
 .RG_HEADER {
     display: block;
-    overflow: hidden;
+    /* overflow: hidden; ?? why? breaks drop-downs but it was probably set for a reason (maybe)*/
 }
 
 .RG_HEADER_TOP {

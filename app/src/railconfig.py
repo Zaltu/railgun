@@ -3,7 +3,7 @@ import json
 
 from db import *
 
-DEFAULT_CONFIG_PATH = "/opt/railgun/config/"
+DEFAULT_CONFIG_PATH = "/opt/railgun/config/db_secrets/"
 DB_TYPES = {
     "PSQL": PSQL
 }
@@ -11,8 +11,8 @@ DB_TYPES = {
 def RailConfig():
     """
     """
-    config_path = os.path.abspath(os.path.join(__file__, "../../../db_secrets"))  # TODO TEMP
-    #config_path = os.environ.get("RAIL_CONFIG_PATH") or DEFAULT_CONFIG_PATH
+    # config_path = os.path.abspath(os.path.join(__file__, "../../../db_secrets"))  # TODO TEMP
+    config_path = os.environ.get("RG_CONFIG_PATH") or DEFAULT_CONFIG_PATH
     dbcs = []
     from glob import glob
     cfiles = glob(os.path.join(config_path, "*"))

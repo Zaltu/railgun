@@ -1,0 +1,4 @@
+FROM postgres:16
+COPY deploy/1_stellar_setup.sql /docker-entrypoint-initdb.d/1_stellar_setup.sql
+COPY deploy/2_stellar_setup.sh /docker-entrypoint-initdb.d/2_stellar_setup.sh
+RUN apt-get update && apt-get install -y apache2-utils

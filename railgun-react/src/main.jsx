@@ -3,7 +3,9 @@ import ReactDOM from 'react-dom/client'
 
 import { GridLayout } from './layouts/gridlayout.jsx'
 
-import './styles/CONSTANTS.css'
+import '/src/styles/CONSTANTS.css'
+import '/src/styles/component_styles.css'
+
 import { telescope } from './STELLAR.jsx'
 
 

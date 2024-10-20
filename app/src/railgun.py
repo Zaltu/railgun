@@ -20,15 +20,12 @@ class Railgun(FastAPI):
     Kaboom.
     """
     allowed_origins = [
-        'http://127.0.0.1:5500',
         'http://localhost',
-        'http://0.0.0.0',
-        'http://127.0.0.1',
-        'http://127.0.0.1:8888',
-        'http://127.0.0.1:5174',
-        'http://127.0.0.1:5173',
         'http://localhost:5174',
-        'http://localhost:5173'
+        'http://metis',
+        'http://metis:5174',
+        'http://127.0.0.1',
+        'http://127.0.0.1:5174'
     ]
     def __init__(self):
         super().__init__()
@@ -73,7 +70,7 @@ class Railgun(FastAPI):
             "entity": Entity code,
             "read": {
                 "return_fields": [fields, to, return],
-                "page": Page Number,
+                "page": Page number,
                 "pagination": Entries per page,
                 "order": Field to sort by
                 "filters": Filter set (see app docs TODO)

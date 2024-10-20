@@ -1,0 +1,14 @@
+## PYTHON
+# Compiled python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+# Test files
+**/*TEST*
+**/technotes.md
+
+# Test DB data
+**/*pgdata*
+
+## SECRETS
+**/*.secret

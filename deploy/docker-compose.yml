@@ -1,8 +1,32 @@
 services:
-  stellardb:
-    image: postgres:16
+  # Railgun App
+  railgun_app:
+    image: railgun:0.0.1
     ports:
-      - "127.0.0.1:6969:5432"
+      - "8888:8888"
+    restart: always
+    volumes:
+      # Mount DB connection secrets to the appropriate location.
+      - ../db_secrets:/opt/railgun/config/db_secrets
+      # Mount JWT key to the appropriate location
+      - ../secrets/auth.secret:/opt/railgun/config/auth.secret
+    networks:
+      - railgun_network
+    depends_on:
+      stellardb:
+        condition: service_healthy
+
+  # Redis
+  stellar:
+    image: redis:7
+    restart: always
+    command: redis-server --loglevel warning
+    networks:
+      - railgun_network
+
+  # Stellar DB
+  stellardb:
+    image: stellardb:0.0.1
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_USER: railgun
@@ -10,5 +34,16 @@ services:
       PGDATA: /var/lib/postgresql/data  # Default
     restart: always
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
-      - ./stellar_setup.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../deploy/pgdata:/var/lib/postgresql/data
+    networks:
+      - railgun_network
+    healthcheck:
+      test: "pg_isready -U railgun -d railgun_internal"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+networks:
+  railgun_network:
+    name: railgun_network

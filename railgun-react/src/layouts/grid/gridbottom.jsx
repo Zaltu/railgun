@@ -26,7 +26,7 @@ function PageSwitcher(props) {
                 onKeyDown={(event) => {
                     if (event.key == "Enter") {
                         let requestedPage = parseInt(event.target.value)
-                        if (requestedPage == NaN) {
+                        if (isNaN(requestedPage)) {
                             // Nothing or not-a-number was actually entered.
                             return
                         } else if (requestedPage < 1) {

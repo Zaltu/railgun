@@ -3,85 +3,102 @@ import {useReactTable, getCoreRowModel, flexRender} from '@tanstack/react-table'
 import MenuList from '@mui/material/MenuList';
 import MenuItem from '@mui/material/MenuItem';
 import { ClickAwayListener } from "@mui/base/ClickAwayListener";
-import {STELLAR} from '/src/STELLAR.jsx';
+import {STELLAR, batchRGData} from '/src/STELLAR.jsx';
 
-import 'react-contexify/ReactContexify.css'
 import '/src/styles/grid.css'
 
 
 
-function formatTableHeaderRow (headerGroup, displayHeaderContext) {
+function TableHeaderRow (props) {
     return (
-        <tr key={headerGroup.id}>
-            {headerGroup.headers.map(header => (
-                <th
-                    onContextMenu={(event) => displayHeaderContext(event, header)}
-                    key={header.id}
-                    {...{
-                        className: "RG_GRID_HEADER",
-                        style: {
-                            width: header.getSize(),
-                            minWidth: header.getSize(),
-                            maxWidth: header.getSize()
-                        },
-                    }}
-                >
-                    {flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                    )}
-                    {formatHeaderResizer(header)}
-                </th>
-            ))}
+        <tr>
+            {props.headerGroup.headers.map(header => (
+                <TableHeaderCell key={header.id} header={header} displayHeaderContext={props.displayHeaderContext} />
+            ) )}
         </tr>
     )
 }
 
-function formatTableRow (row, displayEntityContext) {
+function TableHeaderCell(props) {
+    return (
+        <th
+            onContextMenu={(event) => props.displayHeaderContext(event, props.header)}
+            // key={props.header.id}
+            {...{
+                className: "RG_GRID_HEADER",
+                style: {
+                    width: props.header.column.columnDef.enableResizing ? props.header.getSize() : 'fit-content',
+                    minWidth: props.header.column.columnDef.enableResizing ? props.header.getSize() : 'fit-content',//header.getSize(),
+                    maxWidth: props.header.column.columnDef.enableResizing ? props.header.getSize() : 100000
+                },
+            }}
+        >
+            {flexRender(
+                props.header.column.columnDef.header,
+                props.header.getContext()
+            )}
+            <HeaderResizer header={props.header} />
+        </th>
+    )
+}
+
+function TableRow (props) {
     return (
         <tr
-            key={row.id}
-            className={row.getIsSelected() ? "RG_GRID_ROW_SELECT" : "RG_GRID_ROW"}
+            // key={props.row.id}
+            className={props.row.getIsSelected() ? "RG_GRID_ROW_SELECT" : "RG_GRID_ROW"}
             onClick={(e) => {
-                if (row.getIsSelected()) {return}
-                //row.getAllCells()[0].getContext().table.resetRowSelection()  // HACK - ensures only one selectable on click
-                row.getToggleSelectedHandler()(e)
+                if (props.row.getIsSelected()) {return}
+                //props.row.getAllCells()[0].getContext().table.resetRowSelection()  // HACK - ensures only one selectable on click
+                props.row.getToggleSelectedHandler()(e)
             }}
             onContextMenu={(e)=>{
                 e.preventDefault()  // TODO Delete context menu...
-                if (!row.getIsSelected()) {
-                    row.getAllCells()[0].getContext().table.resetRowSelection()  // HACK - ensures only one selectable on click
-                    row.getToggleSelectedHandler()(e)
+                if (!props.row.getIsSelected()) {
+                    props.row.getAllCells()[0].getContext().table.resetRowSelection()  // HACK - ensures only one selectable on click
+                    props.row.getToggleSelectedHandler()(e)
                 }
-                displayEntityContext(e)
+                props.displayEntityContext(e)
             }}
         >
-            {row.getVisibleCells().map(cell => (
-                formatTableCell(cell)
+            {props.row.getVisibleCells().map(cell => (
+                <TableCell key={cell.id} cell={cell} />
             ))}
         </tr>
     )
 }
 
-function formatTableCell(cell) {
+function TableCell(props) {
     return (
         <td
             className={"RG_GRID_CELL"}
-            key={cell.id}
+            style={{
+                width: props.cell.column.columnDef.enableResizing ? '' : 'fit-content',
+                maxWidth: props.cell.column.columnDef.enableResizing ? 0 : ''
+            }}
+            // key={props.cell.id}
         >
-            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            {flexRender(props.cell.column.columnDef.cell, props.cell.getContext())}
         </td>
     )
 }
 
-function formatHeaderResizer(header) {
+function HeaderResizer(props) {
     return (
         <div
+            key={String(props.header.id)+"_resize"}
             {...{
-            onMouseDown: header.getResizeHandler(),
+            onMouseDown:  (event) => {
+                // TODO YABAI
+                if (!props.header.column.columnDef.enableResizing){
+                    props.header.column.columnDef.size = event.target.parentNode.offsetWidth-6.5
+                    props.header.column.columnDef.enableResizing = true
+                }
+                props.header.getResizeHandler()(event)
+            },
             className: `
                 resizer
-                ${header.column.getIsResizing() ? 'isResizing' : ''}
+                ${props.header.column.getIsResizing() ? 'isResizing' : ''}
             `,
             }}
         />
@@ -140,7 +157,7 @@ function EntityContextMenu(props) {
                     }
                 }}
             >
-                <MenuItem sx={{color:"#ec4a41"}} onClick={() => {console.log("DELETING LMAO");props.deleteRG();props.setContextMenu(null)}}>DELETE THIS</MenuItem>
+                <MenuItem sx={{color:"#ec4a41"}} onClick={() => {console.log("DELETING LMAO");props.batchDeleteRG();props.setContextMenu(null)}}>DELETE THIS</MenuItem>
             </MenuList>
         </ClickAwayListener>
     )
@@ -164,7 +181,7 @@ function setEntityContextMenuOpenPosition(event, setEntityContextMenu) {
 }
 
 
-async function deleteRG(context, getSelected, updateData) {
+async function batchDeleteRG(context, getSelected, updateData) {
     // batch for general multi-select delete
     let batchData = getSelected().rows.map((row) => {
         return {
@@ -178,19 +195,12 @@ async function deleteRG(context, getSelected, updateData) {
         batch: batchData
     }
     console.log(DELETE_REQUEST)
-    fetch("http://127.0.0.1:8888/batch", {
-        mode:"cors",
-        method: "POST",
-        body: JSON.stringify(DELETE_REQUEST)
-    })
-        .then((response) => {
-            if (response.ok) {
-                console.log("DELETED (archived)!!!!")
-                updateData()
-            } else {
-                console.error(response)
-            }
-        })
+    let finished = await batchRGData(DELETE_REQUEST)
+    if (finished){
+        updateData()
+    } else {
+        console.error(response)
+    }
 }
 
 
@@ -237,18 +247,12 @@ function Grid(props) {
             >
                 <thead>
                     {table.getHeaderGroups().map(headerGroup => (
-                        formatTableHeaderRow(
-                            headerGroup,
-                            (event, header) => setHeaderContextMenuOpenPosition(event, props.context, header, setHeaderContextMenu, props.setSelectedField)
-                        )
+                        <TableHeaderRow key={headerGroup.id} headerGroup={headerGroup} displayHeaderContext={(event, header) => setHeaderContextMenuOpenPosition(event, props.context, header, setHeaderContextMenu, props.setSelectedField)} />
                     ))}
                 </thead>
                 <tbody>
                     {table.getRowModel().rows.map(row => (
-                        formatTableRow(
-                            row,
-                            (event) => setEntityContextMenuOpenPosition(event, setEntityContextMenu)
-                        )
+                        <TableRow key={row.id} row={row} displayEntityContext={(event) => setEntityContextMenuOpenPosition(event, setEntityContextMenu)} />
                     ))}
                 </tbody>
             </table>
@@ -256,10 +260,10 @@ function Grid(props) {
                 <HeaderContextMenu contextMenu={headerContextMenu} setContextMenu={setHeaderContextMenu} showFieldEditWindow={props.showFieldEditWindow}/>
             :null}
             {entityContextMenu ? 
-                <EntityContextMenu contextMenu={entityContextMenu} setContextMenu={setEntityContextMenu} deleteRG={()=>deleteRG(props.context, table.getSelectedRowModel, props.updateData)} />
+                <EntityContextMenu contextMenu={entityContextMenu} setContextMenu={setEntityContextMenu} batchDeleteRG={()=>batchDeleteRG(props.context, table.getSelectedRowModel, props.updateData)} />
             :null}
         </div>
     )
 }
-//className="RG_GRID_HEADER_CONTEXTMENU_ITEM"
+
 export default Grid;

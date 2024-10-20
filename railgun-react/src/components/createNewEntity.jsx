@@ -1,7 +1,7 @@
 import Select from 'react-select'
 import AsyncSelect from 'react-select/async'
 
-import { STELLAR, fetchRGData, fetchAutocompleteOptions } from '../STELLAR'
+import { STELLAR, createRGData, fetchAutocompleteOptions } from '../STELLAR'
 
 import './createNewEntity.css'
 import { useRef } from 'react'
@@ -210,20 +210,14 @@ async function createEntity(e, context, displaySelf, resetables, updateData) {
     }
     console.log(CREATE_REQUEST)
 
-    fetch("http://127.0.0.1:8888/create", {
-        mode:"cors",
-        method: "POST",
-        body: JSON.stringify(CREATE_REQUEST)
-    })
-        .then((response) => {
-            if (response.ok) {
-                console.log("CREATED!!!!")
-                updateData()
-                hideSelf(e.target, displaySelf, resetables)
-            } else {
-                console.error(response)
-            }
-        })
+    
+    let finished = await(createRGData(CREATE_REQUEST))
+    if (finished) {
+        updateData()
+        hideSelf(e.target, displaySelf, resetables)
+    } else {
+        console.error(response)
+    }
 }
 
 

@@ -12,7 +12,7 @@ import { NewFieldWindow } from "/src/components/createFieldBox.jsx"
 import { EditFieldWindow } from "../components/editFieldBox.jsx"
 import { NewEntityWindow } from "../components/createNewEntity.jsx"
 
-import {STELLAR, telescope, fetchRGData, fetchAutocompleteOptions} from '/src/STELLAR.jsx';
+import {STELLAR, telescope, fetchRGData, updateRGData, fetchAutocompleteOptions} from '/src/STELLAR.jsx';
 
 
 const TYPE_DISPLAY_ELEMENTS = {
@@ -348,24 +348,16 @@ async function updateRG(event, cell, newvalue, context){
     }
     let tdNode = event.target.parentNode
     console.log(UPDATE_REQUEST)
-    fetch("http://127.0.0.1:8888/update", {
-        mode:"cors",
-        method: "POST",
-        body: JSON.stringify(UPDATE_REQUEST)
-    })
-        .then((response) => {
-            if (response.ok) {
-                console.log("UPDATED!!!!")
-                // tdNode.style.animation = 'flashgood 0.25s linear'
-                tdNode.classList.add('flashgood');
-                setTimeout(() => {
-                    tdNode.classList.remove('flashgood');
-                  }, 1000);
-                // Flash green
-            } else {
-                console.log(response)
-            }
-        })
+    let updated = await updateRGData(UPDATE_REQUEST)
+    if (updated) {
+        // Flash green
+        tdNode.classList.add('flashgood');
+        setTimeout(() => {
+            tdNode.classList.remove('flashgood');
+            }, 1000);
+    } else {
+        // TODO Flash red
+    }
 }
 
 
@@ -411,8 +403,8 @@ function formatHeaders(stellar_fields, context) {
         cell: ({cell}) => {
             return TYPE_DISPLAY_ELEMENTS[stellar_field.type] ? TYPE_DISPLAY_ELEMENTS[stellar_field.type](cell, context) : 'MISING DISPLAY ELEMENT'
         },
-        enableResizing: true,
-        size: 150  // TODO fit-content somehow or page layout save
+        enableResizing: false,
+        // size: 0//'fit-content'//'fit-content'//150  // TODO fit-content somehow or page layout save
     })))
     headers.push(ADD_HEADER)
     return headers
@@ -502,11 +494,11 @@ function GridLayout(props) {
         <div>
             <RGHeader style={{minHeight: "8vh", height: "8vh"}} context={context} setcontext={setContext} />
             <Gridtop style={{minHeight: "4.5vh", height: "4.5vh"}} context={context} fields={fields} setSearchValue={setSearchValue} showFieldCreationWindow={showFieldCreation} showEntityCreationWindow={showEntityCreation} />
-            <Grid style={{minHeight: "85vh", height: "85vh"}} context={context} data={data} setData={setData} headers={headers} showFieldEditWindow={showFieldEdit} setSelectedField={setSelectedField} tableref={tableref} updateData={() => {updateGridData(context, fields, filters, setData);tableref.current.resetRowSelection()}} />
+            <Grid style={{minHeight: "85vh", height: "85vh"}} context={context} data={data} setData={setData} headers={headers} showFieldEditWindow={showFieldEdit} setSelectedField={setSelectedField} tableref={tableref} updateData={() => {updateGridData(context, fields, filters, page, setData, setCount);tableref.current.resetRowSelection()}} />
             <GridBottom style={{minHeight: "2.5vh", height: "2.5vh"}} context={context} count={count} page={page} setPage={setPage} />
             {fieldCreateVisible ? <NewFieldWindow context={context} addDisplayField={(newfield)=> updateFieldsOnCreate(context, fields, setFields, newfield)} displaySelf={showFieldCreation} /> : null }
             {fieldEditVisible ? <EditFieldWindow context={context} displaySelf={showFieldEdit} field={selectedFieldData} /> : null }
-            {entityCreateVisible ? <NewEntityWindow context={context} updateData={() => {updateGridData(context, fields, filters, setData);tableref.current.resetRowSelection()}} displaySelf={showEntityCreation} /> : null }
+            {entityCreateVisible ? <NewEntityWindow context={context} updateData={() => {updateGridData(context, fields, filters, page, setData, setCount);tableref.current.resetRowSelection()}} displaySelf={showEntityCreation} /> : null }
         </div>
     ) : ""
 }

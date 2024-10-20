@@ -9,6 +9,7 @@
 
 .RG_GRID_TABLE {
     border-collapse: collapse;
+    /* margin-top: 1px; */
 }
 
 .RG_GRID_ROW {
@@ -25,12 +26,13 @@
     color: rgba(238, 238, 238, 0.85);
     background-color: var(--RG_HEADER_GREY);
     cursor: pointer;
-    position: relative;
+    position: sticky;
+    top: 0;
 
     line-height: 18px;
     font-size: 0.75rem;
     margin:0;
-    border: 1px solid rgb(161, 161, 161);
+    outline: 1px solid rgb(161, 161, 161);
     padding: 0px 3px 0px;
     user-select: none;
     font-weight: normal;
@@ -47,10 +49,10 @@
 }
 
 .RG_GRID_CELL {
-    /* overflow: hidden; */
-    text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 0;
+    /* max-width: 0px; */
+    /* min-width: fit-content; */
+    /* width: fit-content; */
     line-height: 18px;
     border: 1px solid rgb(161, 161, 161);
     font-size: 0.75rem;

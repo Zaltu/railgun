@@ -15,4 +15,26 @@ Railgun is a wrapper around PSQL for managing data within a relation database in
 
 
 ## Deployment
+### Backend
+The backend is comprised of three containers:
+- railgun (requires building)
+- redis
+- PSQL
+
+#### Building
+From the root directory of the project:
+```bash
+docker build --no-cache -t railgun:X.X.X -f deploy/Dockerfile.app .
+docker build --no-cache -t stellardb:X.X.X -f deploy/Dockerfile.stellardb .
+```
+To note, the only reason the StellarDB image deviates from the default `postgres` image is to create the initial user account...
+
+#### Running
+```bash
+docker compose -f deploy/docker-compose.yml up
+```
+
+**An account is created with the login `railgun`. Observe the logs in order to acquire the initial password for this account as it's generated dynamically on first setup.**
+
+The following notes should be taken about the docker-compose file:  
 TODO

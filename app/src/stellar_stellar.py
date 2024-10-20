@@ -69,7 +69,7 @@ class StellarStellar():
         # *kira kira*
         self.STELLAR = self.stellar_stellar()
 
-        self.comet = redis.StrictRedis(host="localhost", port=6379, db=0)  # TODO env vars
+        self.comet = redis.StrictRedis(host="stellar", port=6379, db=0)  # TODO env vars
         self.reach_for_the_stars()
 
 
@@ -83,7 +83,7 @@ class StellarStellar():
         self.DB_USER = "railgun"
         # Optional connection attributes
         self.DB_PASSWORD = None
-        self.DB_HOST = "localhost"
+        self.DB_HOST = "stellardb"
         self.DB_PORT = 6969
 
 
@@ -98,9 +98,7 @@ class StellarStellar():
         self.database = psycopg.connect(
             dbname=self.DB_NAME,
             user=self.DB_USER,
-            password=self.DB_PASSWORD,
             host=self.DB_HOST,
-            port=self.DB_PORT,
             autocommit=True
         )
         self.version = self._run_command("SELECT version()")[0][0]  # lol

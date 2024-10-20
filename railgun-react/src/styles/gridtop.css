@@ -3,7 +3,7 @@
     justify-content: space-between;
     padding: 0 20px;
     background-color: var(--RG_ITEM_GREY);
-    overflow: hidden;
+    /* overflow: hidden; ?? why? breaks drop-downs but it was probably set for a reason (maybe)*/
 }
 
 .RG_GRIDTOP_CHUNK {
@@ -11,67 +11,4 @@
     gap: 20px;
     background-color: var(--RG_ITEM_GREY);
     align-items: center;
-}
-
-
-.RG_HIGHLIGHT_BUTTON {
-    color: white;
-    background-color: orange;
-
-    border-radius: 5px;
-    padding: 6px 18px;
-    margin: 8px;  /*TODO this extra padding won't be necessary if the entity type icon is displayed in front */
-
-    font-size: 14px;
-    font-weight: bolder;
-    text-align: center;
-
-    user-select: none;
-
-    border-width: 1px;
-    border-color: transparent;
-    border-style: solid;
-}
-
-.RG_HIGHLIGHT_BUTTON:hover {
-    background-color: rgb(201, 130, 0);
-}
-
-
-.RG_SUBTLE_BUTTON {
-    color: var(--RG_TEXT_GREY);
-    background-color: transparent;
-
-    border-radius: 5px;
-    padding: 6px 18px;
-    margin: 8px;  /*TODO this extra padding won't be necessary if the entity type icon is displayed in front */
-
-    font-size: 14px;
-    font-weight: bolder;
-    text-align: center;
-
-    user-select: none;
-
-    border-width: 1px;
-    border-color: white;
-    border-style: solid;
-}
-
-.RG_SUBTLE_BUTTON:hover {
-    background-color: var(--RG_HIGHLIGHT_GREY);
-}
-
-.RG_SIMPLE_SEARCHBOX {
-    display: flex;
-    align-self: center;
-    height: 30px;
-    max-height: 30px;
-    border-radius: 20px;
-    border: 1px solid var(--RG_TEXT_GREY);
-    text-indent: 10px;
-}
-
-
-.RG_SIMPLE_SEARCHBOX:focus {
-    border-color: transparent;
 }

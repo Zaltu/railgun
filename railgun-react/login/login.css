@@ -1,0 +1,27 @@
+.RG_LOGINPAGE {
+    background-color: black;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.RG_LOGINBLOCK {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+}
+
+.RG_LOGINLOGO {
+    
+}
+
+.RG_LOGINAUTH {
+    display: flex;
+    flex-direction: column;
+    width: 21.5rem;
+    gap: 2rem;
+    color: white;
+}
