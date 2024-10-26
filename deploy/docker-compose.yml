@@ -2,6 +2,9 @@ services:
   # Railgun App
   railgun_app:
     image: railgun:0.0.1
+    environment:
+      # Comma delimited list of valid access URLS
+      RG_URL: 'https://railgun.aigis.dev,https://archive.aigis.dev,http://metis:5174,http://metis:5151'
     ports:
       - "8888:8888"
     restart: always

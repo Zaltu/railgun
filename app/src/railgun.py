@@ -1,6 +1,8 @@
+import os
+from json import JSONDecodeError
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from json import JSONDecodeError
 
 from src.railconfig import RailConfig
 from src.stellar_stellar import StellarStellar
@@ -15,24 +17,24 @@ _DEFAULT_QUERY_FILTER = lambda request:{
 }
 
 
+ALLOWED_CORS_ORIGINS = [
+        # Some defaults
+        'http://localhost',
+        'http://127.0.0.1',
+]
+ALLOWED_CORS_ORIGINS.extend(os.environ["RG_URL"].split(","))
+
+
 class Railgun(FastAPI):
     """
     Kaboom.
     """
-    allowed_origins = [
-        'http://localhost',
-        'http://localhost:5174',
-        'http://metis',
-        'http://metis:5174',
-        'http://127.0.0.1',
-        'http://127.0.0.1:5174'
-    ]
     def __init__(self):
         super().__init__()
 
         self.add_middleware(
             CORSMiddleware,
-            allow_origins=Railgun.allowed_origins,
+            allow_origins=ALLOWED_CORS_ORIGINS,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"]
