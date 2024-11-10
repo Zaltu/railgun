@@ -117,5 +117,5 @@ INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('username',
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 23, 4, 'fields');
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('login', 'Login', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 24, 4, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('password', 'Password', 'TEXT', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('password', 'Password', 'PASSWORD', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 25, 4, 'fields');

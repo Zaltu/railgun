@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from threading import Thread
 
 import redis
@@ -37,6 +38,8 @@ class StellarStellar():
         self._field_factory = {
             "create": {
                 "TEXT": self._field_create_simple,
+                "PASSWORD": self._field_create_simple,
+                "MEDIA": self._field_create_simple,
                 "INT": self._field_create_simple,
                 "FLOAT": self._field_create_simple,
                 "DATE": self._field_create_simple,
@@ -53,6 +56,8 @@ class StellarStellar():
             },
             "delete": {
                 "TEXT": self._field_delete_simple,
+                "PASSWORD": self._field_delete_simple,
+                "MEDIA": self._field_delete_media,
                 "INT": self._field_delete_simple,
                 "FLOAT": self._field_delete_simple,
                 "DATE": self._field_delete_simple,
@@ -635,11 +640,13 @@ class StellarStellar():
         # This will raise NotImplementedError if the type isn't valid for this DB connector.
         db.create_field(self.STELLAR[request["schema"]]["entities"][request["entity"]]["code"], request["data"]["code"], request["data"]["type"], nullable=nullable, default=default)
 
+        # Allow storing of generic params for normal fields. Can be used by frontends.
+        F_PARAMS = request["data"].get("options", {})
         # Create Stellar record
         F_COMMAND = sql.SQL("""
-            INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), (%s), false, '{}') RETURNING uid;
+            INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), (%s), false, (%s)) RETURNING uid;
         """)
-        f_id = self._run_command(F_COMMAND, (request["data"]["code"], request["data"]["name"], request["data"]["type"]))[0]
+        f_id = self._run_command(F_COMMAND, (request["data"]["code"], request["data"]["name"], request["data"]["type"], json.dumps(F_PARAMS)))[0]
 
         # Create Stellar relation
         self.__create_stellar_field_relation(f_id, self.STELLAR[request["schema"]]["entities"][request["entity"]]["id"])
@@ -696,6 +703,7 @@ class StellarStellar():
         db.create_field(self.STELLAR[request["schema"]]["entities"][request["entity"]]["code"], request["data"]["code"], "TEXT")
 
         # Create Stellar record
+        # TODO store additional custom params
         LF_PARAMS = {
             "constraints": request["data"]["options"]
         }
@@ -743,6 +751,7 @@ class StellarStellar():
         """
         REL_TABLE = "_ss_{table}_{ftable}"
         # Create source field record
+        # TODO store additional custom params
         SF_PARAMS = {
             "constraints":{
             }
@@ -936,6 +945,44 @@ class StellarStellar():
         # Two comets are sent due to current design. TODO
         self.shoot_for_the_stars(level="schema", schema=request["schema"])
         return True
+
+
+    def _field_delete_media(self, request, db):
+        """
+        TODO
+        Delete a media field. It's assumed archival is handled elswhere.
+        Deleting a media field involves most notibly DELETING ALL THE MEDIA TOO. Thus:
+            - Fetch all records with this field filled out
+            - Delete the media found in those fields
+            - Drop the field normally
+        """
+        entity_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]
+        existings = []
+        # Internal op, go wild with page size
+        # BUG if the DB is actually insane, this will run out of RAM
+        with db.stage() as conn:
+            while len(existings) % 10000 == 0:
+                existings.extend(db.query(
+                    table=entity_sc["code"],
+                    entity_type=entity_sc["soloname"],
+                    fields=[(entity_sc["code"], request["data"]["code"])],
+                    filters={
+                        "filter_operator": "AND",
+                        "filters": [[request["data"]["code"], "is_not", None]]
+                    },
+                    pagination=10000,
+                    conn=conn
+                ))
+                if len(existings) == 0:
+                    # Maybe there is no media at all...
+                    break
+        print(existings)
+        # Delete all the existing files
+        for existing in existings:
+            p = Path(existing[request["data"]["code"]])
+            p.unlink(missing_ok=True)
+        # Then delete the field as a normal text field
+        return self._field_delete_simple(request, db)
 
 
 # CALCULATED -> maybe

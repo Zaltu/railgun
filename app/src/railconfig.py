@@ -11,7 +11,6 @@ DB_TYPES = {
 def RailConfig():
     """
     """
-    # config_path = os.path.abspath(os.path.join(__file__, "../../../db_secrets"))  # TODO TEMP
     config_path = os.environ.get("RG_CONFIG_PATH") or DEFAULT_CONFIG_PATH
     dbcs = []
     from glob import glob

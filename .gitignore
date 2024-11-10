@@ -5,9 +5,15 @@ __pycache__/
 *.pyo
 # Test files
 *TEST*
+technotes.md
+# Dev env setup
+.env.dev
 
 # Test DB data
 *pgdata*
+
+# Test files/media folder
+deploy/files/
 
 ## SECRETS
 *.secret

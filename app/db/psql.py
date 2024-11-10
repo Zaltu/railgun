@@ -9,6 +9,25 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 
+###############################
+#### PSQL FILTER FUNCTIONS ####
+###############################
+# Filtering agains NULL/empty values needs special logic pepehands
+def EQUALS(table, field, value):
+    if value is not None:
+        return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" = ") + sql.Literal(value)
+    else:
+        return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" IS ") + sql.Literal(value)
+def NOT_EQUALS(table, field, value):
+    if value is not None:
+        return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" != ") + sql.Literal(value)
+    else:
+        return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" IS NOT ") + sql.Literal(value)
+
+
+##########################
+###### PSQL DB MAIN ######
+##########################
 class PSQL(Database):
     """
     GUD-compliant PSQL connector.
@@ -17,6 +36,8 @@ class PSQL(Database):
     LOI = "FULL"
     FIELD_TYPES = {
         "TEXT": "TEXT",
+        "PASSWORD": "TEXT",
+        "MEDIA": "TEXT",
         "INT": "BIGINT",
         "FLOAT": "DOUBLE PRECISION",
         "BOOL": "BOOLEAN",
@@ -24,8 +45,8 @@ class PSQL(Database):
         "DATE": "DATE"
     }
     FILTER_OPTIONS = {
-        "is": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" = ") + sql.Literal(value),
-        "is_not": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" != ") + sql.Literal(value),
+        "is": EQUALS,
+        "is_not": NOT_EQUALS,
         "contains": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value+"%%"),
         "not_contains": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" NOT ILIKE ") + sql.Literal("%%"+value+"%%"),
         "starts_with": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal(value+"%%"),
@@ -273,7 +294,7 @@ class PSQL(Database):
 
 
     ### DATA ###
-    def query(self, table, entity_type, fields, joins, filters, pagination=0, page=1, order="uid"):
+    def query(self, table, entity_type, fields, preset_fields={}, joins={"ENTITY":{}, "MULTIENTITY": {}}, filters=[], pagination=0, page=1, order="uid", conn=None):
         """
         Run an optimized (TODO lol) guery.
         """
@@ -300,7 +321,7 @@ class PSQL(Database):
             LIMIT (%s)
             OFFSET (%s)
         """).format(
-            fields=_build_return_fields(fields, table, entity_type),
+            fields=_build_return_fields(fields, preset_fields),
             table=sql.Identifier(table),
             joins=baseRTJoin,
             filters=baseFilter,
@@ -308,7 +329,10 @@ class PSQL(Database):
             group=baseGroup
         )
         print(COMMAND.as_string(self.database))  # TODO log
-        return self._run_command(COMMAND, (pagination, (page*pagination)-pagination))
+        if conn:
+            return conn.execute(COMMAND,  (pagination, (page*pagination)-pagination)).fetchall()
+        else:
+            return self._run_command(COMMAND, (pagination, (page*pagination)-pagination))
 
 
     def count(self, table, filters):
@@ -488,7 +512,7 @@ def _build_filters(filters, table):
     return sql.SQL("WHERE ") + _rec_filter_con(sql.SQL(""), filters, table) if filters else sql.SQL("")
 
 
-def _build_return_fields(return_fields, table, entity_type):
+def _build_return_fields(return_fields, preset_fields):
     """
     Sets up the SQL "SELECT" syntax defining what values should be fetched from the table or joined
     foreign tables. It is assumed that any foreign tables are properly JOINed elsewhere. The return_fields
@@ -505,11 +529,14 @@ def _build_return_fields(return_fields, table, entity_type):
     :returns: SELECT segment of SQL query
     :rtype: psycopg.sql.SQL
     """
-    rts = [
-        sql.SQL("{entity_type} as type").format(
-            entity_type=sql.Literal(entity_type)
+    rts = []
+    for display, value in preset_fields.items():
+        rts.append(
+            sql.SQL("{value} as {display}").format(
+                value=sql.Literal(value),
+                display=sql.Identifier(display)
+            )
         )
-    ]
     for field in return_fields:
         if len(field) == 2:
             # No jsonification to do. It's either a local field or aggregated by join
@@ -528,6 +555,22 @@ def _build_return_fields(return_fields, table, entity_type):
                 )
             )
     return sql.SQL(",").join(rts)
+
+
+# def _build_preset_fields(presets):
+#     """
+#     """
+#     rts = []
+#     for display, value in presets.items():
+#         rts.append(
+#             sql.SQL("{value} as {display}").format(
+#                 value=sql.Literal(value),
+#                 display=sql.Identifier(display)
+#             )
+#         )
+#     return sql.SQL(",").join(rts)
+    
+
 
 
 def _build_joins(joins, table):
@@ -617,3 +660,4 @@ def _rec_filter_con(straight, filter, table):
             )
     straight += sql.SQL(" "+filter["filter_operator"]+" ").join(simpletons)
     return straight
+

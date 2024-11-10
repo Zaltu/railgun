@@ -80,7 +80,6 @@ def authenticate_token(railgun_app, incoming_token):
     """
     try:
         detokened = jwt.decode(incoming_token, TOKENIZER_KEY, algorithms=[TOKENIZER_ALGO])
-        print(detokened)
         # Maybe user has been removed since token generation... (or disabled, TODO)
         # This has been commented out 'cause I don't this method.
         # if not _get_user_exists(railgun_app, detokened.get('user', {}).get('username')):

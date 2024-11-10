@@ -4,15 +4,17 @@ services:
     image: railgun:0.0.1
     environment:
       # Comma delimited list of valid access URLS
-      RG_URL: 'https://railgun.aigis.dev,https://archive.aigis.dev,http://metis:5174,http://metis:5151'
+      RG_URL: 'https://railgun.aigis.dev,https://archive.aigis.dev,http://metis:5174,http://metis:5151,http://127.0.0.1:5151'
     ports:
       - "8888:8888"
     restart: always
     volumes:
       # Mount DB connection secrets to the appropriate location.
-      - ../db_secrets:/opt/railgun/config/db_secrets
+      - ./db_secrets:/opt/railgun/config/db_secrets
       # Mount JWT key to the appropriate location
-      - ../secrets/auth.secret:/opt/railgun/config/auth.secret
+      - ./secrets/auth.secret:/opt/railgun/config/auth.secret
+      # Mount file/media location
+      - ./files:/opt/railgun/files
     networks:
       - railgun_network
     depends_on:
@@ -22,6 +24,8 @@ services:
   # Redis
   stellar:
     image: redis:7
+    ports:
+      - "6379:6379"
     restart: always
     command: redis-server --loglevel warning
     networks:
@@ -30,6 +34,8 @@ services:
   # Stellar DB
   stellardb:
     image: stellardb:0.0.1
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_USER: railgun

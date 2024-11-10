@@ -1,6 +1,11 @@
 import os
+from pathlib import Path
 from json import JSONDecodeError
 
+# Needed for one op
+import shutil
+
+import bcrypt
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -29,6 +34,8 @@ class Railgun(FastAPI):
     """
     Kaboom.
     """
+    FILE_DIR=Path(os.environ.get("RG_FILE_DIR") or "/opt/railgun/files")
+    FILE_TEMP_DIR="_ss_working"
     def __init__(self):
         super().__init__()
 
@@ -94,7 +101,13 @@ class Railgun(FastAPI):
         if "uid" not in request["read"]["return_fields"]:
             request["read"]["return_fields"].append("uid")
 
+        preset_return_fields = {"type":request["entity"]}
         for field in request["read"]["return_fields"]:
+            # TODO review this
+            #if table_sc[field]["type"] == "PASSWORD":
+                # Bit of custom logic to never return password fields
+            #    preset_return_fields[field] = "********"
+            #    continue
             if table_sc[field]["type"] == "ENTITY":
                 joins["ENTITY"][field] = table_sc[field]["params"]["constraints"].values()
                 for ftype in table_sc[field]["params"]["constraints"]:
@@ -113,6 +126,7 @@ class Railgun(FastAPI):
             table=schema_sc[request["entity"]]["code"],
             entity_type=schema_sc[request["entity"]]["soloname"],
             fields=return_fields,
+            preset_fields=preset_return_fields,
             joins=joins,
             filters=FILTERS,
             pagination=request["read"].get("pagination") or 25,
@@ -143,6 +157,7 @@ class Railgun(FastAPI):
                 "entity": <entity>,
                 > IF "update"|"delete"
                 "entity_id": <id of entity to update>,
+                "permanent": <delete completely or only archive>
                 > IF "create"|"update"
                 "data": {
                     <field>: <value>,
@@ -170,19 +185,17 @@ class Railgun(FastAPI):
                 for op in request["batch"]:
                     # We'll need to pass the actual table to the DB regardless of the operation
                     op["table"] = self.STELLAR.STELLAR[request["schema"]]["entities"][op["entity"]]["code"]
+                    op["schema"] = request["schema"]
                     # Process updates
                     if op["request_type"] == "update":
-                        op["schema"] = request["schema"]
                         return_values.append(self._update(db, op, conn))
 
                     # Process creates
                     elif op["request_type"] == "create":
-                        op["schema"] = request["schema"]
                         return_values.append(self._create(db, op, conn))
 
                     # Process deletes
                     elif op["request_type"] == "delete":
-                        # TODO archive management
                         return_values.append(self._delete(db, op, conn))
 
                     else:
@@ -217,29 +230,9 @@ class Railgun(FastAPI):
         return result
 
     def _create(self, db, op, conn):
-        # Any relations we may need to add (entity field updates pepehands)
-        create_rel = []
-        # We need to perform extra actions on some field types (list, entity), alas
-        for update_field in list(op["data"].keys()):  # HACK allow us to pop for entity fields
-            stellar_field = self.STELLAR.STELLAR[op["schema"]]["entities"][op["entity"]]["fields"][update_field]
-            # Validate list ops
-            if stellar_field["type"] == "LIST":
-                _op_validator(op["data"][update_field], stellar_field)
-            # Prep newops for entity fields
-            elif stellar_field["type"] == "MULTIENTITY":
-                # we presume that the value being used for data is correct
-                create_rel.append({
-                    "sf": stellar_field,
-                    "data": op["data"].pop(update_field)
-                })
-            elif stellar_field["type"] == "ENTITY":
-                # we presume that the value being used for data is correct
-                # Slap the single entity update into a list and hope for the best
-                assert type(op["data"][update_field]) == dict
-                create_rel.append({
-                    "sf": stellar_field,
-                    "data": [op["data"].pop(update_field)]
-                })
+        # Perform any data manipualtions needed, and
+        # set up any relations we may need to add (entity field updates pepehands)
+        create_rel = self._op_middleware(op)
 
         created = db.create(op, conn)
         for ftu in create_rel:  # TODO sucks that we have to iterate over these essentially twice
@@ -292,34 +285,16 @@ class Railgun(FastAPI):
         return result
 
     def _update(self, db, op, conn):
-        # Any relations we may need to add (entity field updates pepehands)
-        update_rel = []
-        # We need to perform extra actions on some field types (list, entity), alas
-        for update_field in list(op["data"].keys()):  # HACK allow us to pop for entity fields
-            # Assume archival stuff is managed properly. Someone could meme it potentially though.
-            if update_field == "_ss_archived":
-                continue
-            stellar_field = self.STELLAR.STELLAR[op["schema"]]["entities"][op["entity"]]["fields"][update_field]
-            # Validate list ops
-            if stellar_field["type"] == "LIST":
-                _op_validator(op["data"][update_field], stellar_field)
-            # Prep newops for entity fields
-            elif stellar_field["type"] == "MULTIENTITY":
-                update_rel.append({
-                    "sf": stellar_field,
-                    "data": op["data"].pop(update_field) or []
-                })
-            elif stellar_field["type"] == "ENTITY":
-                # we presume that the value being used for data is correct
-                # Slap the single entity update into a list and hope for the best
-                assert type(op["data"][update_field]) == dict
-                update_rel.append({
-                    "sf": stellar_field,
-                    "data": [op["data"].pop(update_field) or []]
-                })
+        # Perform any data manipualtions needed, and
+        # set up any relations we may need to add (entity field updates pepehands)
+        update_rel = self._op_middleware(op)
+
         if op["data"]:  # We only need to do a "normal" update if there's non-relation things to update
             updated = db.update(op, conn)
-        else: updated = {"type": op["entity"], "uid": op["entity_id"]}
+        else:
+            # Still set a return dict for updated ops, even if we only changed relations
+            updated = {"type": op["entity"], "uid": op["entity_id"]}
+
         for ftu in update_rel:  # TODO sucks that we have to iterate over these essentially twice
             for delrel in ftu["sf"]["params"]["constraints"].values():
                 db.delete_relation(
@@ -372,15 +347,83 @@ class Railgun(FastAPI):
         db = self.data[request["schema"]]
         request["table"] = self.STELLAR.STELLAR[request["schema"]]["entities"][request["entity"]]["code"]
         with db.stage() as conn:
-                if bool(request.get("permanent", False)):  # Some hubris to allow proper parsing of false values
-                    result = self._delete(db, request, conn)
-                else:
-                    request["data"] = {"_ss_archived": True}
-                    result = self._update(db, request, conn)
+            result = self._delete(db, request, conn)
         return result
 
     def _delete(self, db, op, conn):
-        return db.delete(op, conn)
+        if bool(op.get("permanent", False)):  # Some hubris to allow proper parsing of false values
+            result = db.delete(op, conn)
+            # Delete any files
+            # Part of the connection block as changes will un-commit if file op fails
+            ent_file_dir = Railgun.FILE_DIR / op["schema"] / op["table"] / str(op["entity_id"])
+            if ent_file_dir.exists():
+                shutil.rmtree(ent_file_dir)
+        else:
+            op["data"] = {"_ss_archived": True}
+            result = self._update(db, op, conn)
+        return result
+
+
+    def upload_file(self, filepath, filename, metadata):
+        """
+        Save uploaded file to correct formatted location on-disk and
+        update the record's FILE type field with the path str.
+
+        :params str filepath: path to the temporarily downloaded file
+        :params str filename: the original uploaded filename
+        :params dict metadata: the upload metadata dict, must container the entity and field for upload
+        {
+            "schema": <schema>,
+            "type": <entity>,
+            "uid": <entity_id>,
+            "field": <FILE type field>
+        }
+        """
+        if metadata["schema"] not in self.data:
+            raise Exception("Schema %s not known" % metadata["schema"])
+        elif metadata["type"] not in self.STELLAR.STELLAR[metadata["schema"]]["entities"]:
+            raise Exception("Entity %s not in schema %s" % (metadata["type"], metadata["schema"]))
+        elif metadata["field"] not in self.STELLAR.STELLAR[metadata["schema"]]["entities"][metadata["type"]]["fields"]:
+            raise Exception("Field %s not in entity %s in schema %s" % (metadata["field"], metadata["type"], metadata["schema"]))
+        elif not self.STELLAR.STELLAR[metadata["schema"]]["entities"][metadata["type"]]["fields"][metadata["field"]]["type"].startswith("MEDIA"):
+            raise Exception("Field %s in entity %s in schema %s is not a media field" % (metadata["field"], metadata["type"], metadata["schema"]))
+        
+        entcode = self.STELLAR.STELLAR[metadata["schema"]]["entities"][metadata["type"]]["code"]
+
+        internal_final_path = Path(metadata["schema"]) / entcode / str(metadata["uid"]) / (metadata["field"]+"_"+filename.decode())
+        absolute_final_path = Railgun.FILE_DIR / internal_final_path
+
+        print("Intended path:")
+        print(absolute_final_path)
+
+        if absolute_final_path.exists():
+            raise Exception("Path \n%s\nalready taken...")
+
+        # Update the path field with the local path
+        # We intentionally don't reuse Railgun.update to bypass opmiddleware
+        # since we "know what we're doing"
+        db = self.data[metadata["schema"]]
+        with db.stage() as conn:
+            update = db.update({
+                "table": self.STELLAR.STELLAR[metadata["schema"]]["entities"][metadata["type"]]["code"],
+                "entity": metadata["type"],
+                "entity_id": metadata["uid"],
+                "data": {
+                    metadata["field"]: str(internal_final_path)
+                }
+            }, conn)
+
+        # Also validate that the target entity actually (still/ever did) exists
+        if not update:
+            raise Exception("There is no entity %s - %s" % (metadata["type"], metadata["uid"]))
+
+        # Make sure the file directory exists
+        absolute_final_path.parent.mkdir(parents=True, exist_ok=True)
+        # Move the file to it's final destination (fox only, no items)
+        filepath.rename(absolute_final_path)
+
+        # We return the final path all the way to the user, so they can use it to download 
+        return {"path": str(internal_final_path)}
 
 
     def telescope(self, request):
@@ -493,15 +536,58 @@ class Railgun(FastAPI):
             self.data[db].disconnect()
 
 
-def _op_validator(data, stellar):
-    """
-    Validate list fields. Pseudo-generalized since I'm lazy and to avoid premature optimization.
+    def _op_middleware(self, op):
+        """
+        """
+        rel_manager = []
+        # We need to perform extra actions on some field types (list, entity), alas
+        for op_field in list(op["data"].keys()):  # HACK allow us to pop for entity fields
+            # Assume archival stuff is managed properly. Someone could meme it potentially though.
+            # Not actually relevant on creation, realistically, but ease of generalization
+            if op_field == "_ss_archived":
+                continue
+            # Optimization
+            stellar_field = self.STELLAR.STELLAR[op["schema"]]["entities"][op["entity"]]["fields"][op_field]
+            # Validate list ops
+            if stellar_field["type"] == "LIST":
+                assert op["data"][op_field] in stellar_field["params"].get("constraints", [])
+            elif stellar_field["type"] == "PASSWORD":
+                # Encrypt incoming password data
+                op["data"][op_field] = bcrypt.hashpw(op["data"][op_field].encode(), bcrypt.gensalt())
+            elif stellar_field["type"] == "MEDIA":
+                # Media fields can be set to an existing local path within FILE_DIR or None to unset.
+                # Otherwise new media needs to be added via /upload
+                if op["data"][op_field]:
+                    # We do this to allow manual manipulations if absolutely needed.
+                    abs_path = (Railgun.FILE_DIR / Path(op["data"][op_field])).absolute().resolve()
+                    assert Railgun.FILE_DIR in abs_path.parents
+                    assert abs_path.exists()
+                elif "entity_id" in op:  # This can only be done on update, on create there will be nothing to do
+                    # Set to None in order to "wipe" the field, but then we need to delete the media...
+                    # TODO this *really* shouldn't happen here, the op hasn't actually passed through yet.
+                    # BUG field names could overlap and cause there to be more than one, or an incorrect file being matched.
+                    # The real path needs to be fetched from DB for deletion.
+                    # Any kind of failure and it's joever...
+                    # Locate general entity path
+                    ent_file_dir = Railgun.FILE_DIR / op["schema"] / op["table"] / str(op["entity_id"])
+                    # Get all potential files (though should be one)
+                    file = list(ent_file_dir.glob(op_field+"*"))
+                    assert len(file) <= 1  # Could already be no file
+                    file[0].unlink()
 
-    TODO data validation shouldn't be a generic assertion error on the user side
-
-    :param str data: the data a field will be given
-    :param dict stellar: the Stellar of the field being set
-
-    :raises: AssertionError if the intended value is illegal from an application standpoint.
-    """
-    assert data in stellar["params"].get("constraints", [])
+            # Prep newops for entity fields
+            elif stellar_field["type"] == "MULTIENTITY":
+                # we presume that the value being used for data is correct
+                rel_manager.append({
+                    "sf": stellar_field,
+                    "data": op["data"].pop(op_field) or []  # [] in case set to None
+                })
+            elif stellar_field["type"] == "ENTITY":
+                # we presume that the value being used for data is correct
+                # Slap the single entity update into a list and hope for the best
+                assert type(op["data"][op_field]) == dict
+                rel_manager.append({
+                    "sf": stellar_field,
+                    "data": [op["data"].pop(op_field) or []]  # [] in case set to None
+                })
+        return rel_manager
