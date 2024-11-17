@@ -6,7 +6,7 @@ https://github.com/fastapi/fastapi/issues/858
 from fastapi import Request
 from fastapi.staticfiles import StaticFiles
 
-from src import railsecure
+from src.modules import railsecure
 
 class AuthStaticFiles(StaticFiles):
     def __init__(self, railgun_app, *args, **kwargs):

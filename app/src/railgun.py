@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 from json import JSONDecodeError
 
@@ -9,9 +10,12 @@ import bcrypt
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.railconfig import RailConfig
+from src.modules.railconfig import RailConfig
 from src.stellar_stellar import StellarStellar
 from db._database import CUDError
+
+# TEST TODO
+from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField
 
 
 _DEFAULT_QUERY_FILTER = lambda request:{
@@ -91,9 +95,12 @@ class Railgun(FastAPI):
         if request["read"].get("filters"):
             FILTERS["filters"].append(request["read"]["filters"])
 
+        # Helpers for syntax
         schema_sc = self.STELLAR.STELLAR[request["schema"]]["entities"]
         table_sc = schema_sc[request["entity"]]["fields"]
-        return_fields = []
+
+        # Setup default structures
+        return_fields = ReturnFieldSet(None, [])
         joins = {"ENTITY":{}, "MULTIENTITY": {}}
 
         # Ensure return_fields exists
@@ -101,32 +108,58 @@ class Railgun(FastAPI):
         if "uid" not in request["read"]["return_fields"]:
             request["read"]["return_fields"].append("uid")
 
-        preset_return_fields = {"type":request["entity"]}
+        # Always include base type
+        return_fields.put(PresetReturnField("type", request["entity"]))
+
         for field in request["read"]["return_fields"]:
-            # TODO review this
-            #if table_sc[field]["type"] == "PASSWORD":
-                # Bit of custom logic to never return password fields
-            #    preset_return_fields[field] = "********"
-            #    continue
-            if table_sc[field]["type"] == "ENTITY":
-                joins["ENTITY"][field] = table_sc[field]["params"]["constraints"].values()
-                for ftype in table_sc[field]["params"]["constraints"]:
-                    return_fields.append((ftype, schema_sc[ftype]["code"], schema_sc[ftype]["display_name_col"], field))
-            elif table_sc[field]["type"] == "MULTIENTITY":
-                joins["MULTIENTITY"][field] = table_sc[field]["params"]["constraints"]
-                if "displaycols" not in joins:  # Sus
-                    joins["displaycols"] = {key:value["display_name_col"] for key, value in schema_sc.items()}
-                for ftype in table_sc[field]["params"]["constraints"]:
-                    return_fields.append((table_sc[field]["params"]["constraints"][ftype]["relation"], field))
+            if "." in field:
+                # Assume linked field, normal fields should not have special characters in their codes
+                linked_field = field.split(".")
+                # Ensure we have a properly formatted linked field request
+                assert len(linked_field)%2==1
+
+                # Parse linked fields recursively for arbitrary depth
+                return_fields.put(
+                    self._linked_return_field_builder(joins, linked_field, 0, schema_sc, request["entity"])
+                )
             else:
-                return_fields.append((schema_sc[request["entity"]]["code"], field))
-        print(request)
+                # TODO review this
+                #if table_sc[field]["type"] == "PASSWORD":
+                    # Bit of custom logic to never return password fields
+                #    preset_return_fields[field] = "********"
+                #    continue
+                if table_sc[field]["type"] == "ENTITY":
+                    joins["ENTITY"][field] = {"constraints": table_sc[field]["params"]["constraints"].values(), "local_table": schema_sc[request["entity"]]["code"]}
+                    for ftype in table_sc[field]["params"]["constraints"]:
+                        return_fields.put(ReturnFieldSet(
+                            name=field,
+                            values=[
+                                PresetReturnField(name="type", value=ftype),
+                                ReturnField(table=schema_sc[ftype]["code"], name="uid"),
+                                ReturnField(table=schema_sc[ftype]["code"], name=schema_sc[ftype]["display_name_col"])
+                            ]
+                        ))
+                elif table_sc[field]["type"] == "MULTIENTITY":
+                    joins["MULTIENTITY"][field] = table_sc[field]["params"]["constraints"]
+                    if "displaycols" not in joins:  # Sus
+                        joins["displaycols"] = {key:value["display_name_col"] for key, value in schema_sc.items()}
+                    for ftype in table_sc[field]["params"]["constraints"]:
+                        return_fields.put(ReturnField(
+                            table=table_sc[field]["params"]["constraints"][ftype]["relation"],
+                            name=field
+                        ))
+                else:
+                    return_fields.put(ReturnField(
+                        table=schema_sc[request["entity"]]["code"],
+                        name=field
+                    ))
+        print(return_fields)
+
         target = self.data[request["schema"]]
         resp = target.query(
             table=schema_sc[request["entity"]]["code"],
             entity_type=schema_sc[request["entity"]]["soloname"],
             fields=return_fields,
-            preset_fields=preset_return_fields,
             joins=joins,
             filters=FILTERS,
             pagination=request["read"].get("pagination") or 25,
@@ -548,9 +581,13 @@ class Railgun(FastAPI):
                 continue
             # Optimization
             stellar_field = self.STELLAR.STELLAR[op["schema"]]["entities"][op["entity"]]["fields"][op_field]
-            # Validate list ops
+            # Middleware for applicable field types
             if stellar_field["type"] == "LIST":
+                # Validate list option exists
                 assert op["data"][op_field] in stellar_field["params"].get("constraints", [])
+            elif stellar_field["type"] == "JSON":
+                # Parse JSON field
+                op["data"][op_field] = json.dumps(op["data"][op_field])
             elif stellar_field["type"] == "PASSWORD":
                 # Encrypt incoming password data
                 op["data"][op_field] = bcrypt.hashpw(op["data"][op_field].encode(), bcrypt.gensalt())
@@ -591,3 +628,56 @@ class Railgun(FastAPI):
                     "data": [op["data"].pop(op_field) or []]  # [] in case set to None
                 })
         return rel_manager
+
+
+    def _linked_return_field_builder(self, joins, linked_field, i, schema_sc, base_type):
+        """
+        """
+        table_sc = schema_sc[base_type]["fields"]
+        base_table = schema_sc[base_type]["code"]
+
+        joins["ENTITY"][linked_field[i]] = {
+            "constraints": table_sc[linked_field[i]]["params"]["constraints"].values(),
+            "local_table": base_table
+        }
+        return_field_subset = ReturnFieldSet(
+            name=linked_field[i],
+            values=[
+                PresetReturnField(name="type", value=linked_field[i+1]),
+                ReturnField(table=schema_sc[linked_field[i+1]]["code"], name="uid"),
+                ReturnField(table=schema_sc[linked_field[i+1]]["code"], name=schema_sc[linked_field[i+1]]["display_name_col"]),
+            ]
+        )
+
+        if schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["type"] == "ENTITY":
+            # We need to go deeper
+            if i+3<len(linked_field):
+                return_field_subset.put(self._linked_return_field_builder(
+                    joins, linked_field, i+2, schema_sc, linked_field[i+1]
+                ))
+            # This is as deep as it gets
+            else:
+                joins["ENTITY"][linked_field[i+2]] = {
+                    "constraints": schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"].values(),
+                    "local_table": schema_sc[linked_field[i+1]]["code"]
+                }
+                for ftype in schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"]:
+                    target_sc = schema_sc[ftype]
+                    return_field_subset.put(
+                        ReturnFieldSet(
+                            name=linked_field[i+2],
+                            values=[
+                                PresetReturnField(name="type", value=ftype),
+                                ReturnField(table=target_sc["code"], name="uid"),
+                                ReturnField(table=target_sc["code"], name=target_sc["display_name_col"])
+                            ]
+                        )
+                    )
+        elif schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["type"] == "MULTIENTITY":
+            # TODO MULTIENTITY
+            pass
+        else:
+            return_field_subset.put(
+                ReturnField(table=schema_sc[linked_field[i+1]]["code"], name=linked_field[i+2]),
+            )
+        return return_field_subset

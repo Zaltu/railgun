@@ -4,6 +4,8 @@ GUD Database implementation for PostgreSQL.
 # Parent DB class
 from db._database import Database
 
+from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField
+
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
@@ -294,7 +296,7 @@ class PSQL(Database):
 
 
     ### DATA ###
-    def query(self, table, entity_type, fields, preset_fields={}, joins={"ENTITY":{}, "MULTIENTITY": {}}, filters=[], pagination=0, page=1, order="uid", conn=None):
+    def query(self, table, entity_type, fields, joins={"ENTITY":{}, "MULTIENTITY": {}}, filters=[], pagination=0, page=1, order="uid", conn=None):
         """
         Run an optimized (TODO lol) guery.
         """
@@ -321,7 +323,7 @@ class PSQL(Database):
             LIMIT (%s)
             OFFSET (%s)
         """).format(
-            fields=_build_return_fields(fields, preset_fields),
+            fields=_build_return_fields(fields),
             table=sql.Identifier(table),
             joins=baseRTJoin,
             filters=baseFilter,
@@ -512,7 +514,7 @@ def _build_filters(filters, table):
     return sql.SQL("WHERE ") + _rec_filter_con(sql.SQL(""), filters, table) if filters else sql.SQL("")
 
 
-def _build_return_fields(return_fields, preset_fields):
+def _build_return_fields(return_fields):
     """
     Sets up the SQL "SELECT" syntax defining what values should be fetched from the table or joined
     foreign tables. It is assumed that any foreign tables are properly JOINed elsewhere. The return_fields
@@ -530,47 +532,27 @@ def _build_return_fields(return_fields, preset_fields):
     :rtype: psycopg.sql.SQL
     """
     rts = []
-    for display, value in preset_fields.items():
-        rts.append(
-            sql.SQL("{value} as {display}").format(
-                value=sql.Literal(value),
-                display=sql.Identifier(display)
-            )
-        )
     for field in return_fields:
-        if len(field) == 2:
+        if type(field)==PresetReturnField:
+            rts.append(
+                sql.SQL("{value} as {display}").format(
+                    value=sql.Literal(field.value),
+                    display=sql.Identifier(field.name)
+                )
+            )
+        elif type(field)==ReturnField:
             # No jsonification to do. It's either a local field or aggregated by join
             rts.append(sql.SQL("{table}.{field}").format(
-                    table=sql.Identifier(field[0]),
-                    field=sql.Identifier(field[1])
+                    table=sql.Identifier(field.table),
+                    field=sql.Identifier(field.name)
                 )
             )
         else:
-            rts.append(sql.SQL("json_build_object('type', {ftype}, 'uid', {table}.{uid}, 'name', {table}.{ffield}) AS {field}").format(
-                    ftype=sql.Literal(field[0]),
-                    table=sql.Identifier(field[1]),
-                    ffield=sql.Identifier(field[2]),
-                    field=sql.Identifier(field[3]),
-                    uid=sql.Identifier("uid")
-                )
-            )
+            # It's assumed field.value is a ReturnFieldSet object
+            rts.append(_embed_json_build(field)+sql.SQL(" AS {field}").format(
+                field=sql.Identifier(field.name)
+            ))
     return sql.SQL(",").join(rts)
-
-
-# def _build_preset_fields(presets):
-#     """
-#     """
-#     rts = []
-#     for display, value in presets.items():
-#         rts.append(
-#             sql.SQL("{value} as {display}").format(
-#                 value=sql.Literal(value),
-#                 display=sql.Identifier(display)
-#             )
-#         )
-#     return sql.SQL(",").join(rts)
-    
-
 
 
 def _build_joins(joins, table):
@@ -578,12 +560,18 @@ def _build_joins(joins, table):
     Sets up the SQL "JOIN" syntax required for any linked field queries or filters.
     Needs bits and pieces of STELLAR schema data for entity fields. The "joins" parameter
     as such expects the following format:
-    {
+    ENTITY => {
         field: [
-            {"relation": <relation_table>,
-             "table": <foreign_table>
-             "col": <foreign_column>}
+            {
+                local_table: <source_table>,
+                constraints: {"relation": <relation_table>,
+                "table": <foreign_table>
+                "col": <foreign_column>}
+            }
         ]
+    }
+    MULTIENTITY => {
+    TODO
     }
 
     :param dict joins: foreign table information for join
@@ -594,13 +582,13 @@ def _build_joins(joins, table):
     """
     baseRTJoin = sql.SQL("")
     for field, join in joins["ENTITY"].items():
-        for ftable in join:
+        for ftable in join["constraints"]:
             baseRTJoin += sql.SQL("LEFT JOIN {relation} ON {relation}.{fk_table} = {table}.{uid} AND {relation}.{table_col} = {field}").format(
                 relation=sql.Identifier(ftable["relation"]),
-                fk_table=sql.Identifier("fk_{table}".format(table=table)),
-                table=sql.Identifier(table),
+                fk_table=sql.Identifier("fk_{table}".format(table=join["local_table"])),
+                table=sql.Identifier(join["local_table"]),
                 uid=sql.Identifier("uid"),
-                table_col=sql.Identifier("{table}_col".format(table=table)),
+                table_col=sql.Identifier("{table}_col".format(table=join["local_table"])),
                 field=sql.Literal(field)
             )
             baseRTJoin += sql.SQL(" LEFT JOIN {ftable} ON {relation}.{fk_ftable} = {ftable}.{uid}").format(
@@ -613,10 +601,9 @@ def _build_joins(joins, table):
             )
     for field, join in joins["MULTIENTITY"].items():
         for ftype, ftable in join.items():
-            print(ftable)
             baseRTJoin += sql.SQL("""
                 LEFT JOIN (
-                    SELECT {relation}.{fk_table}, json_agg(json_build_object('type', {ftype}, 'uid', {ftable}.uid, {ftypenameLit}, {ftable}.{ftypename})) AS {field}
+                    SELECT {relation}.{fk_table}, json_agg(json_build_object('type', {ftype}, 'uid', {ftable}."uid", {ftypenameLit}, {ftable}.{ftypename})) AS {field}
                     FROM {relation}
                     LEFT JOIN {ftable} ON {relation}.{fk_ftable} = {ftable}.uid
                     GROUP BY {relation}.{fk_table}
@@ -661,3 +648,28 @@ def _rec_filter_con(straight, filter, table):
     straight += sql.SQL(" "+filter["filter_operator"]+" ").join(simpletons)
     return straight
 
+
+def _embed_json_build(return_fields):
+    """
+
+    :param str ftype: foreign entity type
+    :param str table: foreign table code
+    :param str fdfield: foreign descriptor field
+    :param str ffield: foreign table field, or another field to compile
+    """
+    baseBuild = sql.SQL("json_build_object({field_builder})")
+    field_builder = []
+    for field in return_fields:
+        if type(field)==PresetReturnField:
+            field_builder.append(sql.Literal(field.name))
+            field_builder.append(sql.Literal(field.value))
+        elif type(field)==ReturnField:
+            field_builder.append(sql.Literal(field.name))
+            field_builder.append(
+                sql.Identifier(field.table)+sql.SQL(".")+sql.Identifier(field.name)
+            )
+        else:
+            # Assume ReturnFieldSet
+            field_builder.append(sql.Literal(field.name))
+            field_builder.append(_embed_json_build(field))
+    return baseBuild.format(field_builder=sql.SQL(", ").join(field_builder))

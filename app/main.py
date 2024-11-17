@@ -12,8 +12,8 @@ from pathlib import Path
 import tempfile
 
 from src.railgun import Railgun
-from src import railsecure
-from src.railstatic import AuthStaticFiles
+from src.modules import railsecure
+from src.modules.railstatic import AuthStaticFiles
 
 from pprint import pprint as pp
 
