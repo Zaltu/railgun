@@ -1,4 +1,5 @@
 import json
+from uuid import uuid4
 from pathlib import Path
 from threading import Thread
 
@@ -14,6 +15,9 @@ class StellarStellar():
     COMET_NAME = "STELLAR"  # Redis channel name
 
     def __init__(self):
+        # To uniquely identify this instance
+        self.star_id = str(uuid4())
+
         # Prep config
         self._load_config()
 
@@ -175,8 +179,12 @@ class StellarStellar():
             for message in pubsub.listen():
                 if message["type"] == "message":
                     request = json.loads(message["data"].decode("utf-8"))
-                    print("A comet streaks across the sky!")
-                    self.stellar_update(request)
+                    # Only listen for messages from the stars that aren't our own.
+                    # Assume we update Stellar when we shoot for the stars for this
+                    # instance in the first place.
+                    if request["star"] != self.star_id:
+                        print("A comet streaks across the sky!")
+                        self.stellar_update(request)
 
         self._listener_thread = Thread(target=listener_handler, daemon=True)
         self._listener_thread.start()
@@ -191,12 +199,23 @@ class StellarStellar():
         :param int schema: schema to update if level is schema or entity
         :param int entity: entity to update if level is entity
         """
-        cannonball = {"level": level}
+        cannonball = {
+            "level": level,
+            "star": self.star_id
+        }
         if schema:
             cannonball["schema"] = schema
         if entity:
             cannonball["entity"] = entity
+        # Shoot for the stars
         self.comet.publish(StellarStellar.COMET_NAME, json.dumps(cannonball))
+        # Update ourself immediately though, before we even actually return to RG.
+        # This technically makes stellar calls slower to execute, but ensures that
+        # further calls to this instance that immediately follow this one will have
+        # the correct schema available.
+        # In production, this logic would require a session_uuid manager/HAProxy to 
+        # ensure subsequent requests are triaged to the same endpoint.
+        self.stellar_update(cannonball)
 
 
     def fetch_schemas(self):

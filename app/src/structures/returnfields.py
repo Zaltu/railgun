@@ -13,7 +13,6 @@ class ReturnFieldSet():
 
     def put(self, return_field):
         if type(self._return_fields.get(return_field.name))==ReturnFieldSet:
-            print("Found a dup")
             for value in return_field:
                 self._return_fields[return_field.name].put(value)
         else:

@@ -1,5 +1,4 @@
 import os
-import json
 from pathlib import Path
 from json import JSONDecodeError
 
@@ -7,7 +6,7 @@ from json import JSONDecodeError
 import shutil
 
 import bcrypt
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.modules.railconfig import RailConfig
@@ -153,7 +152,6 @@ class Railgun(FastAPI):
                         table=schema_sc[request["entity"]]["code"],
                         name=field
                     ))
-        print(return_fields)
 
         target = self.data[request["schema"]]
         resp = target.query(
@@ -235,7 +233,10 @@ class Railgun(FastAPI):
                         raise CUDError("Unrecognized request type: %s" % op["request_type"])
 
         except (AssertionError, CUDError, KeyError) as cude:
-            return str(cude) + "\nAll operations rolled back."
+            raise HTTPException(
+                status_code=500,
+                detail=str(type(cude)) + " " + str(cude) + "\nAll operations rolled back."
+            )
         return return_values
 
 
@@ -585,12 +586,20 @@ class Railgun(FastAPI):
             if stellar_field["type"] == "LIST":
                 # Validate list option exists
                 assert op["data"][op_field] in stellar_field["params"].get("constraints", [])
-            elif stellar_field["type"] == "JSON":
-                # Parse JSON field
-                op["data"][op_field] = json.dumps(op["data"][op_field])
-            elif stellar_field["type"] == "PASSWORD":
-                # Encrypt incoming password data
-                op["data"][op_field] = bcrypt.hashpw(op["data"][op_field].encode(), bcrypt.gensalt())
+            elif stellar_field["type"] == "MULTIENTITY":
+                # we presume that the value being used for data is correct
+                rel_manager.append({
+                    "sf": stellar_field,
+                    "data": op["data"].pop(op_field) or []  # [] in case set to None
+                })
+            elif stellar_field["type"] == "ENTITY":
+                # we presume that the value being used for data is correct
+                # Slap the single entity update into a list and hope for the best
+                assert type(op["data"][op_field]) == dict
+                rel_manager.append({
+                    "sf": stellar_field,
+                    "data": [op["data"].pop(op_field) or []]  # [] in case set to None
+                })
             elif stellar_field["type"] == "MEDIA":
                 # Media fields can be set to an existing local path within FILE_DIR or None to unset.
                 # Otherwise new media needs to be added via /upload
@@ -611,22 +620,9 @@ class Railgun(FastAPI):
                     file = list(ent_file_dir.glob(op_field+"*"))
                     assert len(file) <= 1  # Could already be no file
                     file[0].unlink()
-
-            # Prep newops for entity fields
-            elif stellar_field["type"] == "MULTIENTITY":
-                # we presume that the value being used for data is correct
-                rel_manager.append({
-                    "sf": stellar_field,
-                    "data": op["data"].pop(op_field) or []  # [] in case set to None
-                })
-            elif stellar_field["type"] == "ENTITY":
-                # we presume that the value being used for data is correct
-                # Slap the single entity update into a list and hope for the best
-                assert type(op["data"][op_field]) == dict
-                rel_manager.append({
-                    "sf": stellar_field,
-                    "data": [op["data"].pop(op_field) or []]  # [] in case set to None
-                })
+            elif stellar_field["type"] == "PASSWORD":
+                # Encrypt incoming password data
+                op["data"][op_field] = bcrypt.hashpw(op["data"][op_field].encode(), bcrypt.gensalt()).decode()
         return rel_manager
 
 
