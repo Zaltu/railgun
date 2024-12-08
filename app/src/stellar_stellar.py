@@ -7,6 +7,8 @@ import redis
 import psycopg
 from psycopg import sql
 
+from src.structures.returnfields import ReturnField, ReturnFieldSet
+
 
 class StellarStellar():
     """
@@ -983,8 +985,11 @@ class StellarStellar():
             while len(existings) % 10000 == 0:
                 existings.extend(db.query(
                     table=entity_sc["code"],
-                    entity_type=entity_sc["soloname"],
-                    fields=[(entity_sc["code"], request["data"]["code"])],
+                    fields=ReturnFieldSet(
+                        table=entity_sc["code"],
+                        name=None,
+                        values=[ReturnField(entity_sc["code"], request["data"]["code"])]
+                    ),
                     filters={
                         "filter_operator": "AND",
                         "filters": [[request["data"]["code"], "is_not", None]]

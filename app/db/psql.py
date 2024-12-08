@@ -4,7 +4,7 @@ GUD Database implementation for PostgreSQL.
 # Parent DB class
 from db._database import Database
 
-from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField
+from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField, EntityReturnField, MultiEntityReturnField
 
 import psycopg
 from psycopg import sql
@@ -296,37 +296,23 @@ class PSQL(Database):
 
 
     ### DATA ###
-    def query(self, table, entity_type, fields, joins={"ENTITY":{}, "MULTIENTITY": {}}, filters=[], pagination=0, page=1, order="uid", conn=None):
+    def query(self, table, fields, filters=[], pagination=0, page=1, order="uid", conn=None):
         """
         Run an optimized (TODO lol) guery.
         """
-        # Prep all JOINs
-        baseRTJoin = _build_joins(joins, table)
-        
-        baseGroup = sql.SQL("")
-        # if joins:
-        #     baseGroup += sql.SQL("GROUP BY {table}.{uid}").format(
-        #         table=sql.Identifier(table),
-        #         uid=sql.Identifier("uid")
-        #     )
-
-        # Prep all filters
-        baseFilter = _build_filters(filters, table)
+        baseGroup = sql.SQL("")  # TODO
 
         COMMAND = sql.SQL("""
-            SELECT {fields}
-            FROM {table}
-            {joins}
+            SELECT {select}
             {filters}
             {group}
             ORDER BY {table}.{order}
             LIMIT (%s)
             OFFSET (%s)
         """).format(
-            fields=_build_return_fields(fields),
+            select=_build_select_chunk(fields),
             table=sql.Identifier(table),
-            joins=baseRTJoin,
-            filters=baseFilter,
+            filters=_build_filters(filters, table),
             order=sql.Identifier(order),
             group=baseGroup
         )
@@ -510,28 +496,44 @@ def _build_filters(filters, table):
     :returns: WHERE statement
     :rtype: psycopg.sql.SQL
     """
-    print(filters)
     return sql.SQL("WHERE ") + _rec_filter_con(sql.SQL(""), filters, table) if filters else sql.SQL("")
 
 
-def _build_return_fields(return_fields):
+def _build_select_chunk(return_fields):
     """
     Sets up the SQL "SELECT" syntax defining what values should be fetched from the table or joined
-    foreign tables. It is assumed that any foreign tables are properly JOINed elsewhere. The return_fields
-    provided are expected in the following format:
-    [
-        (<table>, <table_field>, <local_field>)
-    ]
-    table_field indicates the name of the column on the table from which it will be queried.
-    If that table matches the current table, local_field is not required.
+    foreign tables. This includes any JOINs required in order to SELECT the data.
 
-    :param list return_fields: list of fields to fetch from the DB
-    :param str table: current table
+    :param ReturnFieldSet return_fields: return fields for this query
 
     :returns: SELECT segment of SQL query
     :rtype: psycopg.sql.SQL
     """
+    base_select_chunk = sql.SQL("{return_fields} FROM {table} {entity_joins} {multientity_joins}")
+    rts, ejoins, mjoins = _build_return_fields(return_fields)
+
+    return base_select_chunk.format(
+        return_fields=sql.SQL(",").join(rts),
+        table=sql.Identifier(return_fields.table),
+        entity_joins=_build_entity_joins(ejoins),
+        multientity_joins=_build_multientity_joins(mjoins)
+    )
+
+
+def _build_return_fields(return_fields):
+    """
+    Builds the top-level return fields for a query. Split into subfunction for readability.
+    By doing so, also populates the entity and multi-entity join dicts later used by the
+    SELECT builder to populate JOINs.
+
+    :param ReturnFieldSet return_fields: return fields for this query
+
+    :returns: list of top-level return fields, entity join dict and multi-entity join dict
+    :rtype: list, dict, dict
+    """
     rts = []
+    ejoins = {}
+    mjoins = {}
     for field in return_fields:
         if type(field)==PresetReturnField:
             rts.append(
@@ -547,20 +549,33 @@ def _build_return_fields(return_fields):
                     field=sql.Identifier(field.name)
                 )
             )
-        else:
-            # It's assumed field.value is a ReturnFieldSet object
-            rts.append(_embed_json_build(field)+sql.SQL(" AS {field}").format(
-                field=sql.Identifier(field.name)
+        elif type(field)==EntityReturnField:
+            # Entity fields are built at the parent level, from normal left-joins
+            # JOIN THIS LEVEL BEFORE THE NEXT
+            ejoins[field.name] = field.join
+            rts.append(_embed_json_build(field, ejoins)+sql.SQL(" AS {display_name}").format(
+                display_name=sql.Identifier(field.name)
             ))
-    return sql.SQL(",").join(rts)
+        elif type(field)==MultiEntityReturnField:
+            mjoins[field.name] = field
+            # Append the top-level return reference
+            # TODO json_agg should be done here, and formatted to accept multi-types
+            rts.append(sql.SQL("{table}.{field}").format(
+                    table=sql.Identifier(field.join["relation"]),
+                    field=sql.Identifier(field.name)
+                )
+            )
+        else:
+            raise NotImplementedError("Unknown ReturnField type %s" % field)
+    return rts, ejoins, mjoins
 
 
-def _build_joins(joins, table):
+def _build_entity_joins(joins):
     """
-    Sets up the SQL "JOIN" syntax required for any linked field queries or filters.
+    Sets up the SQL "JOIN" syntax required for any linked entity field queries.
     Needs bits and pieces of STELLAR schema data for entity fields. The "joins" parameter
     as such expects the following format:
-    ENTITY => {
+    {
         field: [
             {
                 local_table: <source_table>,
@@ -570,20 +585,16 @@ def _build_joins(joins, table):
             }
         ]
     }
-    MULTIENTITY => {
-    TODO
-    }
 
-    :param dict joins: foreign table information for join
-    :param str table: current table
+    :param dict joins: entity join dict
 
-    :returns: JOIN segment of SQL query
+    :returns: entity JOIN segment of SQL query
     :rtype: psycopg.sql.SQL
     """
     baseRTJoin = sql.SQL("")
-    for field, join in joins["ENTITY"].items():
+    for field, join in joins.items():
         for ftable in join["constraints"]:
-            baseRTJoin += sql.SQL("LEFT JOIN {relation} ON {relation}.{fk_table} = {table}.{uid} AND {relation}.{table_col} = {field}").format(
+            baseRTJoin += sql.SQL("\nLEFT JOIN {relation} ON {relation}.{fk_table} = {table}.{uid} AND {relation}.{table_col} = {field}").format(
                 relation=sql.Identifier(ftable["relation"]),
                 fk_table=sql.Identifier("fk_{table}".format(table=join["local_table"])),
                 table=sql.Identifier(join["local_table"]),
@@ -591,7 +602,7 @@ def _build_joins(joins, table):
                 table_col=sql.Identifier("{table}_col".format(table=join["local_table"])),
                 field=sql.Literal(field)
             )
-            baseRTJoin += sql.SQL(" LEFT JOIN {ftable} ON {relation}.{fk_ftable} = {ftable}.{uid}").format(
+            baseRTJoin += sql.SQL("\nLEFT JOIN {ftable} ON {relation}.{fk_ftable} = {ftable}.{uid}").format(
                 ftable=sql.Identifier(ftable["table"]),
                 relation=sql.Identifier(ftable["relation"]),
                 fk_ftable=sql.Identifier("fk_{ftable}".format(ftable=ftable["table"])),
@@ -599,28 +610,45 @@ def _build_joins(joins, table):
                 ftable_col=sql.Identifier("{ftable}_col".format(ftable=ftable["table"])),
                 ffield=sql.Literal(ftable["col"])
             )
-    for field, join in joins["MULTIENTITY"].items():
-        for ftype, ftable in join.items():
-            baseRTJoin += sql.SQL("""
-                LEFT JOIN (
-                    SELECT {relation}.{fk_table}, json_agg(json_build_object('type', {ftype}, 'uid', {ftable}."uid", {ftypenameLit}, {ftable}.{ftypename})) AS {field}
-                    FROM {relation}
-                    LEFT JOIN {ftable} ON {relation}.{fk_ftable} = {ftable}.uid
-                    GROUP BY {relation}.{fk_table}
-                ) {relation} ON {relation}.{fk_table} = {table}.uid
-            """).format(
-                relation=sql.Identifier(ftable["relation"]),
-                fk_table=sql.Identifier("fk_"+table),
-                ftable=sql.Identifier(ftable["table"]),
-                field=sql.Identifier(field),
-                fk_ftable=sql.Identifier("fk_"+ftable["table"]),
-                table=sql.Identifier(table),
-                ftype=sql.Literal(ftype),
-                ftypenameLit=sql.Literal(joins["displaycols"][ftype]),
-                ftypename=sql.Identifier(joins["displaycols"][ftype])
-            )
     return baseRTJoin
 
+
+def _build_multientity_joins(joins):
+    """
+    Sets up the SQL "JOIN" syntax required for any linked multi-entity field queries.
+    Needs bits and pieces of STELLAR schema data for entity fields. The "joins" parameter
+    as such expects the following format:
+    {
+        "field": MultiEntityReturnField
+    }
+
+    :param dict joins: multi-entity join dict
+
+    :returns: multi-entity SQL join section
+    :rtype: psycopg.sql.SQL
+    """
+    baseRTJoin = sql.SQL("")
+    for field, returnfield in joins.items():
+        ejoins = {}
+        baseRTJoin += sql.SQL("""
+            LEFT JOIN (
+                SELECT {relation}.{fk_table}, json_agg({embedded_object}) AS {field}
+                FROM {relation}
+                LEFT JOIN {ftable} ON {relation}.{fk_ftable} = {ftable}.uid
+                {ejoins}
+                GROUP BY {relation}.{fk_table}
+            ) {relation} ON {relation}.{fk_table} = {table}.uid
+        """).format(
+            relation=sql.Identifier(returnfield.join["relation"]),
+            fk_table=sql.Identifier("fk_"+returnfield.table),
+            ftable=sql.Identifier(returnfield.join["table"]),
+            field=sql.Identifier(field),
+            fk_ftable=sql.Identifier("fk_"+returnfield.join["table"]),
+            table=sql.Identifier(returnfield.table),
+            embedded_object=_embed_json_build(returnfield, ejoins),
+            ejoins=_build_entity_joins(ejoins)
+        )
+    return baseRTJoin
 
 
 def _rec_filter_con(straight, filter, table):
@@ -629,7 +657,7 @@ def _rec_filter_con(straight, filter, table):
     See Railgun docs for expected filter format.
 
     :param str straight: previous deconstructed filter
-    :param dict|list filter: this section's filter config\
+    :param dict|list filter: this section's filter config
     :param str table: this table's code
 
     :returns: this section and below's deconstructed, PSQL-compliant WHERE statement
@@ -649,13 +677,16 @@ def _rec_filter_con(straight, filter, table):
     return straight
 
 
-def _embed_json_build(return_fields):
+def _embed_json_build(return_fields, joins):
     """
+    Build the PSQL json_build_object chunk that's used to forward pre-formatted
+    entity fields to Railgun.
 
-    :param str ftype: foreign entity type
-    :param str table: foreign table code
-    :param str fdfield: foreign descriptor field
-    :param str ffield: foreign table field, or another field to compile
+    :param EntityReturnField return_fields: EntityReturnField object to build
+    :param dict joins: shared JOIN dict for the active SELECT block
+
+    :returns: entity return field SQL chunk
+    :rtype: psycopg.sql.SQL
     """
     baseBuild = sql.SQL("json_build_object({field_builder})")
     field_builder = []
@@ -668,8 +699,13 @@ def _embed_json_build(return_fields):
             field_builder.append(
                 sql.Identifier(field.table)+sql.SQL(".")+sql.Identifier(field.name)
             )
-        else:
-            # Assume ReturnFieldSet
+        elif type(field)==EntityReturnField:
+            # JOIN THIS LEVEL BEFORE THE NEXT
+            joins[field.name] = field.join
+            field_builder.append(sql.Literal(field.name))
+            field_builder.append(_embed_json_build(field, joins))
+        elif type(field)==MultiEntityReturnField:
+            # TODO
             field_builder.append(sql.Literal(field.name))
             field_builder.append(_embed_json_build(field))
     return baseBuild.format(field_builder=sql.SQL(", ").join(field_builder))

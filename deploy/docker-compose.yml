@@ -44,6 +44,7 @@ services:
     restart: always
     volumes:
       - ../deploy/pgdata:/var/lib/postgresql/data
+      - ../deploy/db_backups:/opt/db_backups
     networks:
       - railgun_network
     healthcheck:

@@ -14,7 +14,7 @@ from src.stellar_stellar import StellarStellar
 from db._database import CUDError
 
 # TEST TODO
-from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField
+from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField, EntityReturnField, MultiEntityReturnField
 
 
 _DEFAULT_QUERY_FILTER = lambda request:{
@@ -90,17 +90,16 @@ class Railgun(FastAPI):
         }
         """
         # Preformatting default archived filter
-        FILTERS = _DEFAULT_QUERY_FILTER(request)
+        filters = _DEFAULT_QUERY_FILTER(request)
         if request["read"].get("filters"):
-            FILTERS["filters"].append(request["read"]["filters"])
+            filters["filters"].append(request["read"]["filters"])
 
         # Helpers for syntax
         schema_sc = self.STELLAR.STELLAR[request["schema"]]["entities"]
         table_sc = schema_sc[request["entity"]]["fields"]
 
         # Setup default structures
-        return_fields = ReturnFieldSet(None, [])
-        joins = {"ENTITY":{}, "MULTIENTITY": {}}
+        return_fields = ReturnFieldSet(schema_sc[request["entity"]]["code"], None, [])
 
         # Ensure return_fields exists
         request["read"]["return_fields"] = request["read"].get("return_fields") or []
@@ -119,7 +118,7 @@ class Railgun(FastAPI):
 
                 # Parse linked fields recursively for arbitrary depth
                 return_fields.put(
-                    self._linked_return_field_builder(joins, linked_field, 0, schema_sc, request["entity"])
+                    self._linked_return_field_builder(linked_field, 0, schema_sc, request["entity"])
                 )
             else:
                 # TODO review this
@@ -128,10 +127,10 @@ class Railgun(FastAPI):
                 #    preset_return_fields[field] = "********"
                 #    continue
                 if table_sc[field]["type"] == "ENTITY":
-                    joins["ENTITY"][field] = {"constraints": table_sc[field]["params"]["constraints"].values(), "local_table": schema_sc[request["entity"]]["code"]}
                     for ftype in table_sc[field]["params"]["constraints"]:
-                        return_fields.put(ReturnFieldSet(
+                        return_fields.put(EntityReturnField(
                             name=field,
+                            join={"constraints": table_sc[field]["params"]["constraints"].values(), "local_table": schema_sc[request["entity"]]["code"]},
                             values=[
                                 PresetReturnField(name="type", value=ftype),
                                 ReturnField(table=schema_sc[ftype]["code"], name="uid"),
@@ -139,33 +138,39 @@ class Railgun(FastAPI):
                             ]
                         ))
                 elif table_sc[field]["type"] == "MULTIENTITY":
-                    joins["MULTIENTITY"][field] = table_sc[field]["params"]["constraints"]
-                    if "displaycols" not in joins:  # Sus
-                        joins["displaycols"] = {key:value["display_name_col"] for key, value in schema_sc.items()}
+                    # BUG only one type is returned even for multi-entity multi-type right now. Fix will come with objectified fields
                     for ftype in table_sc[field]["params"]["constraints"]:
-                        return_fields.put(ReturnField(
-                            table=table_sc[field]["params"]["constraints"][ftype]["relation"],
-                            name=field
-                        ))
+                        return_fields.put(MultiEntityReturnField(
+                                table=schema_sc[request["entity"]]["code"],
+                                name=field,
+                                join=table_sc[field]["params"]["constraints"][ftype],
+                                values=[
+                                    PresetReturnField(name="type", value=ftype),
+                                    ReturnField(table=schema_sc[ftype]["code"], name="uid"),
+                                    ReturnField(table=schema_sc[ftype]["code"], name=schema_sc[ftype]["display_name_col"])
+                                ]
+                            )
+                        )
+                        # return_fields.put(ReturnField(
+                        #     table=table_sc[field]["params"]["constraints"][ftype]["relation"],
+                        #     name=field
+                        # ))
                 else:
                     return_fields.put(ReturnField(
                         table=schema_sc[request["entity"]]["code"],
                         name=field
                     ))
-
         target = self.data[request["schema"]]
         resp = target.query(
             table=schema_sc[request["entity"]]["code"],
-            entity_type=schema_sc[request["entity"]]["soloname"],
             fields=return_fields,
-            joins=joins,
-            filters=FILTERS,
+            filters=filters,
             pagination=request["read"].get("pagination") or 25,
             page=request["read"].get("page") or 1,
             order=request["read"].get("order") or "uid",
         )
         if bool(request["read"].get("include_count", False)):
-            query_total_count = target.count(schema_sc[request["entity"]]["code"], FILTERS)
+            query_total_count = target.count(schema_sc[request["entity"]]["code"], filters)
             resp.append(query_total_count)
         return resp
 
@@ -626,42 +631,40 @@ class Railgun(FastAPI):
         return rel_manager
 
 
-    def _linked_return_field_builder(self, joins, linked_field, i, schema_sc, base_type):
+    def _linked_return_field_builder(self, linked_field, i, schema_sc, base_type):
         """
         """
         table_sc = schema_sc[base_type]["fields"]
         base_table = schema_sc[base_type]["code"]
 
-        joins["ENTITY"][linked_field[i]] = {
-            "constraints": table_sc[linked_field[i]]["params"]["constraints"].values(),
-            "local_table": base_table
-        }
-        return_field_subset = ReturnFieldSet(
+        if table_sc[linked_field[i]]["type"] == "ENTITY":
+            return_field_subset = EntityReturnField(
             name=linked_field[i],
+            join={"constraints": table_sc[linked_field[i]]["params"]["constraints"].values(), "local_table": base_table},
             values=[
                 PresetReturnField(name="type", value=linked_field[i+1]),
                 ReturnField(table=schema_sc[linked_field[i+1]]["code"], name="uid"),
                 ReturnField(table=schema_sc[linked_field[i+1]]["code"], name=schema_sc[linked_field[i+1]]["display_name_col"]),
             ]
         )
+        elif table_sc[linked_field[i]]["type"] == "MULTIENTITY":
+            return self._linked_multientity_return_field_builder(linked_field, i, schema_sc, base_type)
+
 
         if schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["type"] == "ENTITY":
             # We need to go deeper
             if i+3<len(linked_field):
                 return_field_subset.put(self._linked_return_field_builder(
-                    joins, linked_field, i+2, schema_sc, linked_field[i+1]
+                    linked_field, i+2, schema_sc, linked_field[i+1]
                 ))
             # This is as deep as it gets
             else:
-                joins["ENTITY"][linked_field[i+2]] = {
-                    "constraints": schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"].values(),
-                    "local_table": schema_sc[linked_field[i+1]]["code"]
-                }
                 for ftype in schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"]:
                     target_sc = schema_sc[ftype]
                     return_field_subset.put(
-                        ReturnFieldSet(
+                        EntityReturnField(
                             name=linked_field[i+2],
+                            join={"constraints": schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"].values(), "local_table": schema_sc[linked_field[i+1]]["code"]},
                             values=[
                                 PresetReturnField(name="type", value=ftype),
                                 ReturnField(table=target_sc["code"], name="uid"),
@@ -670,8 +673,55 @@ class Railgun(FastAPI):
                         )
                     )
         elif schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["type"] == "MULTIENTITY":
-            # TODO MULTIENTITY
-            pass
+            pass  # TODO
+        else:
+            return_field_subset.put(
+                ReturnField(table=schema_sc[linked_field[i+1]]["code"], name=linked_field[i+2]),
+            )
+        return return_field_subset
+
+
+    def _linked_multientity_return_field_builder(self, linked_field, i, schema_sc, base_type):
+        """
+        """
+        table_sc = schema_sc[base_type]["fields"]
+        base_table = schema_sc[base_type]["code"]
+
+        for ftype in table_sc[linked_field[i]]["params"]["constraints"]:  # BUG - overwrites if multi-entity multi-type. JSON_AGG should be one level up | actually ftype is static because of the dot-path, so just set directly
+            return_field_subset = MultiEntityReturnField(
+                table=base_table,
+                name=linked_field[i],
+                join=table_sc[linked_field[i]]["params"]["constraints"][ftype],
+                values=[
+                    PresetReturnField(name="type", value=linked_field[i+1]),
+                    ReturnField(table=schema_sc[linked_field[i+1]]["code"], name="uid"),
+                    ReturnField(table=schema_sc[linked_field[i+1]]["code"], name=schema_sc[linked_field[i+1]]["display_name_col"]),
+                ]
+            )
+
+        if schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["type"] == "ENTITY":
+            # We need to go deeper
+            if i+3<len(linked_field):
+                return_field_subset.put(self._linked_return_field_builder(
+                    linked_field, i+2, schema_sc, linked_field[i+1]
+                ))
+            # This is as deep as it gets
+            else:
+                for ftype in schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"]:
+                    target_sc = schema_sc[ftype]
+                    return_field_subset.put(
+                        EntityReturnField(
+                            name=linked_field[i+2],
+                            join={"constraints": schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["params"]["constraints"].values(), "local_table": schema_sc[linked_field[i+1]]["code"]},
+                            values=[
+                                PresetReturnField(name="type", value=ftype),
+                                ReturnField(table=target_sc["code"], name="uid"),
+                                ReturnField(table=target_sc["code"], name=target_sc["display_name_col"])
+                            ]
+                        )
+                    )
+        elif schema_sc[linked_field[i+1]]["fields"][linked_field[i+2]]["type"] == "MULTIENTITY":
+            pass  # TODO
         else:
             return_field_subset.put(
                 ReturnField(table=schema_sc[linked_field[i+1]]["code"], name=linked_field[i+2]),
