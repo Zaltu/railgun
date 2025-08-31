@@ -17,11 +17,15 @@ from psycopg.rows import dict_row
 # Filtering agains NULL/empty values needs special logic pepehands
 def EQUALS(table, field, value):
     if value is not None:
+        if type(value)==str:
+            value = value.replace("%", "%%")
         return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" = ") + sql.Literal(value)
     else:
         return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" IS ") + sql.Literal(value)
 def NOT_EQUALS(table, field, value):
     if value is not None:
+        if type(value)==str:
+            value = value.replace("%", "%%")
         return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" != ") + sql.Literal(value)
     else:
         return sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" IS NOT ") + sql.Literal(value)
@@ -534,6 +538,7 @@ def _build_return_fields(return_fields):
     rts = []
     ejoins = {}
     mjoins = {}
+    print(return_fields)
     for field in return_fields:
         if type(field)==PresetReturnField:
             rts.append(
@@ -557,11 +562,21 @@ def _build_return_fields(return_fields):
                 display_name=sql.Identifier(field.name)
             ))
         elif type(field)==MultiEntityReturnField:
-            mjoins[field.name] = field
+            for subentfield in field:
+                mjoins[field.name+"_"+subentfield.join["relation"]] = subentfield
             # Append the top-level return reference
             # TODO json_agg should be done here, and formatted to accept multi-types
-            rts.append(sql.SQL("{table}.{field}").format(
-                    table=sql.Identifier(field.join["relation"]),
+            multitypesubsql = []
+            for ftype in field._return_fields:
+                multitypesubsql.append(sql.SQL("{table}.{field}::jsonb").format(
+                        table=sql.Identifier(field.join[ftype]["relation"]),
+                        field=sql.Identifier(field.name+"_"+field._return_fields[ftype].join["relation"])
+                    )
+                )
+            rts.append(
+                sql.SQL("COALESCE({mergedsublists}, {sublists}) AS {field}").format(
+                    mergedsublists=sql.SQL(" || ").join(multitypesubsql),
+                    sublists=sql.SQL(",").join(multitypesubsql),
                     field=sql.Identifier(field.name)
                 )
             )

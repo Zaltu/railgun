@@ -563,6 +563,7 @@ class StellarStellar():
             - Shoot for the stars
 
         Delete an entity involves:
+            - Drop all MULTI/ENTITY fields of this entity (otherwise foreign table field params break)
             - Droping the entity table: DB
             - Droping the entity record: Stellar
             - Droping the entity's field records: Stellar
@@ -600,6 +601,24 @@ class StellarStellar():
             self._run_command(HIDE_COMMAND, return_style=None)
         else:
             # This is a real delete. Boom goes the dynamite.
+
+            # Remove any multi/entity fields
+            for field in self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["fields"].values():
+                if field["type"] in ["ENTITY", "MULTIENTITY"]:
+                    # HACK to fully delete the field in one go. EXTREMELY BAD
+                    self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["fields"][field["code"]]["archived"] = True
+
+                    # Call the internal function directly to avoid needlessly shooting for the stars.
+                    self._field_delete_entity({
+                        "part": "field",
+                        "request_type": "delete",
+                        "schema": request["schema"],
+                        "entity": request["data"]["type"],
+                        "data": {
+                            "code": field["code"]
+                        }
+                    }, db)
+
             # Drop entity table
             db.delete_table(self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["code"])
 
@@ -742,7 +761,7 @@ class StellarStellar():
         """
         Creating an entity link is the most convoluted process of all. Thanks SQL.
         It generally involves the following steps:
-            - Create a relation field for each target entity in the physical DB: DB
+            - Create a relation table for each target entity in the physical DB: DB
             - Create a field record for the source entity: Stellar
             - Create a field record for the target entity: Stellar
             - Shoot for the stars
@@ -875,8 +894,119 @@ class StellarStellar():
 
     def _field_update_entity(self, request, db):
         """
+        Updating an entity link is a convoluted process. Thanks SQL.
+        It generally involves the following steps:
+            - Create a relation table for each new target entity in the physical DB: DB
+            - Update the field record for the source entity: Stellar
+            - Create a field record for the target entity: Stellar
+            - Shoot for the stars
+        Entity field updates require the additional "data/options" key in the request,
+        representing a list of the foreign tables (entity types) that the entity field
+        should link to:
+        {
+            "part": "field",
+            "request_type": "update",
+            "schema": <schema_code>,
+            "entity": <entity_code>,
+            "data": {
+                "code": <field_code>,
+                "name": <field_name>, #OPTIONAL (TODO)
+                "options": [<ftables>], #OPTIONAL
+
+            }
+        }
+        BUG
+        While we assume it to be easier for any frontend to send a full list of entities the field should allow linking to,
+        updating a multi-entity field to remove a link is currently not supported.
+        Of the list sent, anything that doesn't already exist will be created. Everything else is ignored. Removing a link is currently not possible.
+        TODO
+        Change field (display) name with update call.
+
+        :param dict request: the entity field creation request
+        :param db._database.Database db: physical DB connection
+
+        :returns: true to validate creation
+        :rtype: bool
         """
-        raise NotImplementedError
+        REL_TABLE = "_ss_{table}_{ftable}"
+
+
+        table_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]
+        field_sc = table_sc["fields"][request["data"]["code"]]
+        # Prepare source field record
+        SF_UPDATES = field_sc["params"]
+
+        for ftype in request["data"]["options"]:
+            if ftype in SF_UPDATES["constraints"]:
+                # Field link already defined, skip it.
+                continue
+            ftable = self.STELLAR[request["schema"]]["entities"][ftype]["code"]
+            # Create relation table
+            tab = REL_TABLE.format(table=table_sc["code"], ftable=ftable)
+            REL_TABLE_COMMAND = sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {relation} (
+                    {table_col} TEXT NOT NULL,
+                    {fk_table} INT NOT NULL REFERENCES {table} (uid) ON DELETE CASCADE,
+                    uid INT GENERATED ALWAYS AS IDENTITY,
+                    {fk_ftable} INT NOT NULL REFERENCES {ftable} (uid) ON DELETE CASCADE,
+                    {ftable_col} TEXT NOT NULL
+                );
+            """).format(
+                relation=sql.Identifier(tab),
+                table_col=sql.Identifier(table_sc["code"]+"_col"),
+                fk_table=sql.Identifier("fk_"+table_sc["code"]),
+                table=sql.Identifier(table_sc["code"]),
+                fk_ftable=sql.Identifier("fk_"+ftable),
+                ftable=sql.Identifier(ftable),
+                ftable_col=sql.Identifier(ftable+"_col")
+            )
+            db._run_command(REL_TABLE_COMMAND, return_style=None)
+
+            # Create foreign field record
+            FF_PARAMS = {
+                "constraints":{
+                    request['entity']:{
+                        "relation": tab,
+                        "table": table_sc["code"],
+                        "col": request["data"]["code"]
+                    }
+                }
+            }
+            FF_CODE = f"{table_sc['code']}"
+            # Since we're generating a field, make sure the code isn't already reserved
+            if FF_CODE in self.STELLAR[request["schema"]]["entities"][ftype]["fields"]:
+                FF_CODE+="_1"
+                i = 2
+                while FF_CODE in self.STELLAR[request["schema"]]["entities"][ftype]["fields"]:
+                    FF_CODE = FF_CODE[:-1] + str(i)
+                    i+=1
+            FF_NAME = f"{table_sc['multiname']} <-> {self.STELLAR[request['schema']]['entities'][ftype]['multiname']}"
+            FF_COMMAND = sql.SQL("""
+                INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), 'MULTIENTITY', false, (%s)) RETURNING uid
+            """)
+            f_id = self._run_command(FF_COMMAND, (FF_CODE, FF_NAME, json.dumps(FF_PARAMS)))[0]
+            self.__create_stellar_field_relation(f_id, self.STELLAR[request['schema']]['entities'][ftype]["id"])
+
+            # Prep constraint type for source field record
+            SF_UPDATES["constraints"][ftype] = {
+                "relation": tab,
+                "table": ftable,
+                "col": FF_CODE
+            }
+
+        # Update source field record
+        SF_COMMAND = sql.SQL("""
+            UPDATE fields
+            SET params=(%s)
+            WHERE uid=(%s)
+            RETURNING uid
+        """)
+        f_id = self._run_command(SF_COMMAND, (json.dumps(SF_UPDATES),field_sc["id"]))[0]
+
+        # Comet needs to be at schema level to capture reverse fields
+        self.shoot_for_the_stars(level="schema", schema=request["schema"])
+        return True
+
 
 
     def _field_delete_simple(self, request, db):
