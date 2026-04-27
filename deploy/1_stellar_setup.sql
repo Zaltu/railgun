@@ -49,6 +49,14 @@ CREATE TABLE page_settings (
     _ss_archived BOOLEAN NOT NULL DEFAULT false
 );
 
+CREATE TABLE permission_rules (
+    uid INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    name TEXT NOT NULL,
+    filters JSONB,
+    optype TEXT,
+    _ss_archived BOOLEAN NOT NULL DEFAULT false
+);
+
 CREATE TABLE _ss_entities_schemas (
     entities_col TEXT NOT NULL,
     fk_entities INT NOT NULL REFERENCES entities (uid) ON DELETE CASCADE,
@@ -89,6 +97,21 @@ CREATE TABLE _ss_page_settings_fields (
     fields_col TEXT NOT NULL
 );
 
+CREATE TABLE _ss_permission_rules_entities (
+    permission_rules_col TEXT NOT NULL,
+    fk_permission_rules INT NOT NULL REFERENCES permission_rules (uid) ON DELETE CASCADE,
+    uid INT GENERATED ALWAYS AS IDENTITY,
+    fk_entities INT NOT NULL REFERENCES entities (uid) ON DELETE CASCADE,
+    entities_col TEXT NOT NULL
+);
+
+CREATE TABLE _ss_users_permission_rules (
+    users_col TEXT NOT NULL,
+    fk_users INT NOT NULL REFERENCES users (uid) ON DELETE CASCADE,
+    uid INT GENERATED ALWAYS AS IDENTITY,
+    fk_permission_rules INT NOT NULL REFERENCES permission_rules (uid) ON DELETE CASCADE,
+    permission_rules_col TEXT NOT NULL
+);
 
 -- SCHEMAS --
 INSERT INTO schemas (code, name, host, db_type) VALUES ('railgun_internal', 'Railgun Internal', 'stellardb', 'PSQL');
@@ -112,6 +135,10 @@ INSERT INTO _ss_entities_schemas (entities_col, fk_entities, fk_schemas, schemas
 
 INSERT INTO entities (code, multiname, soloname, display_name_col) VALUES ('page_settings', 'Page Settings', 'Page Setting', 'name');
 INSERT INTO _ss_entities_schemas (entities_col, fk_entities, fk_schemas, schemas_col) VALUES ('schema', 6, 1, 'entities');
+
+INSERT INTO entities (code, multiname, soloname, display_name_col) VALUES ('permission_rules', 'Permission Rules', 'Permission Rule', 'name');
+INSERT INTO _ss_entities_schemas (entities_col, fk_entities, fk_schemas, schemas_col) VALUES ('schema', 7, 1, 'entities');
+
 
 -- Schema fields
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}');
@@ -144,57 +171,75 @@ INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('fields', '
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 13, 2, 'fields');
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('page_settings', 'Page Settings', 'MULTIENTITY', false, '{"constraints":{"Page Setting": {"relation": "_ss_page_settings_entities", "table": "page_settings", "col": "entity"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 14, 2, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('permission_rules', 'Permission Rules', 'MULTIENTITY', false, '{"constraints":{"Permission Rule": {"relation": "_ss_permission_rules_entities", "table": "permission_rules", "col": "entity"}}}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 15, 2, 'fields');
 
 -- Field fields
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}');
-INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 15, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('code', 'Code', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 16, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Display Name', 'TEXT', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('code', 'Code', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 17, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('field_type', 'Field Type', 'TEXT', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Display Name', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 18, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('indexed', 'Indexed', 'BOOL', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('field_type', 'Field Type', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 19, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('params', 'Parameters', 'JSON', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('indexed', 'Indexed', 'BOOL', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 20, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('description', 'Description', 'TEXT', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('params', 'Parameters', 'JSON', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 21, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('entity', 'Entity', 'ENTITY', false, '{"constraints":{"Entity": {"relation": "_ss_fields_entities", "table": "entities", "col": "fields"}}}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('description', 'Description', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 22, 3, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('page_settings_sort', 'Pages Sorted', 'MULTIENTITY', false, '{"constraints":{"Page Setting": {"relation": "_ss_page_settings_fields", "table": "page_settings", "col": "sort"}}}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('entity', 'Entity', 'ENTITY', false, '{"constraints":{"Entity": {"relation": "_ss_fields_entities", "table": "entities", "col": "fields"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 23, 3, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('page_settings_sort', 'Pages Sorted', 'MULTIENTITY', false, '{"constraints":{"Page Setting": {"relation": "_ss_page_settings_fields", "table": "page_settings", "col": "sort"}}}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 24, 3, 'fields');
 
 -- User fields
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}');
-INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 24, 4, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('username', 'Username', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 25, 4, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('login', 'Login', 'TEXT', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('username', 'Username', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 26, 4, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('password', 'Password', 'PASSWORD', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('login', 'Login', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 27, 4, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('password', 'Password', 'PASSWORD', false, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 28, 4, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('permission_rules', 'Permission Rules', 'MULTIENTITY', false, '{"constraints":{"Permission Rule": {"relation": "_ss_users_permission_rules", "table": "permission_rules", "col": "users"}}}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 29, 4, 'fields');
 
 -- Page fields
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}');
-INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 28, 5, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Name', 'TEXT', false, '{}');
-INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 29, 5, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('page_settings', 'Page Settings', 'MULTIENTITY', false, '{"constraints":{"Page Setting": {"relation": "_ss_pages_page_settings", "table": "page_settings", "col": "pages"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 30, 5, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Name', 'TEXT', false, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 31, 5, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('page_settings', 'Page Settings', 'MULTIENTITY', false, '{"constraints":{"Page Setting": {"relation": "_ss_pages_page_settings", "table": "page_settings", "col": "pages"}}}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 32, 5, 'fields');
 
 -- Page Setting fields
 INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}');
-INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 31, 6, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Name', 'TEXT', false, '{}');
-INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 32, 6, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('pages', 'Pages', 'MULTIENTITY', false, '{"constraints":{"Page": {"relation": "_ss_pages_page_settings", "table": "pages", "col": "page_settings"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 33, 6, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('entity', 'Entity', 'ENTITY', false, '{"constraints":{"Entity": {"relation": "_ss_page_settings_entities", "table": "entities", "col": "page_settings"}}}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Name', 'TEXT', false, '{}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 34, 6, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('sort', 'Sort By', 'ENTITY', false, '{"constraints":{"Field": {"relation": "_ss_page_settings_fields", "table": "fields", "col": "page_setting_sort"}}}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('pages', 'Pages', 'MULTIENTITY', false, '{"constraints":{"Page": {"relation": "_ss_pages_page_settings", "table": "pages", "col": "page_settings"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 35, 6, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('filters', 'Filters', 'JSON', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('entity', 'Entity', 'ENTITY', false, '{"constraints":{"Entity": {"relation": "_ss_page_settings_entities", "table": "entities", "col": "page_settings"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 36, 6, 'fields');
-INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('fields', 'Fields', 'JSON', false, '{}');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('sort', 'Sort By', 'ENTITY', false, '{"constraints":{"Field": {"relation": "_ss_page_settings_fields", "table": "fields", "col": "page_setting_sort"}}}');
 INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 37, 6, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('filters', 'Filters', 'JSON', false, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 38, 6, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('fields', 'Fields', 'JSON', false, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 39, 6, 'fields');
+
+-- Permission Rule fields
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 40, 7, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('name', 'Permission Rule Name', 'TEXT', false, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 41, 7, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('filters', 'Display Restriction', 'JSON', false, '{}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 42, 7, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('optype', 'Operation Type', 'LIST', false, '{"constraints":["Create", "Read", "Update", "Delete"]}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 43, 7, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('entity', 'Entity', 'ENTITY', false, '{"constraints":{"Entity": {"relation": "_ss_permission_rules_entities", "table": "entities", "col": "permission_rules"}}}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 44, 7, 'fields');
+INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('users', 'Users', 'MULTIENTITY', false, '{"constraints":{"User": {"relation": "_ss_users_permission_rules", "table": "users", "col": "permission_rules"}}}');
+INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', 45, 7, 'fields');

@@ -1,4 +1,4 @@
-from fastapi import Request, Depends, Cookie
+from fastapi import Request, Depends
 from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, APIKeyCookie
 
@@ -24,13 +24,13 @@ railgun_app = Railgun()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
 cookieauth_scheme = APIKeyCookie(name="access_token", auto_error=False)
 
-def authentication(access_token=Depends(cookieauth_scheme), token=Depends(oauth2_scheme)):
+async def authentication(access_token=Depends(cookieauth_scheme), token=Depends(oauth2_scheme)):
     """
     Both Authorization Header and cookie authentication are allowed, matching what is
     returned by a call to /login.
     Cookie is prefered when authenticating via web, Header is prefered when authenticating via API.
     """
-    railsecure.authenticate_token(railgun_app, access_token or token)
+    return await railsecure.authenticate_token(railgun_app, access_token or token)
 
 
 @railgun_app.get("/heartbeat")
@@ -42,7 +42,7 @@ async def alive():#token=Depends(oauth2_scheme)):
 
 @railgun_app.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):  # This is disgusting
-    authentication = railsecure.authenticate_login(railgun_app, form_data)
+    authentication = await railsecure.authenticate_login(railgun_app, form_data)
     response = Response(json.dumps(authentication))
     response.set_cookie(
         key="access_token",
@@ -60,7 +60,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):  # This is di
 async def create(request: Request):  # Typing... The root of all evil.
     try:
         request = await request.json()
-        response = railgun_app.create(request)
+        response = await railgun_app.create(request)
     except JSONDecodeError:
         return "Bad request"
     except:
@@ -69,11 +69,11 @@ async def create(request: Request):  # Typing... The root of all evil.
     return response
 
 
-@railgun_app.post("/read", dependencies=[Depends(authentication)])
-async def read(request: Request):  # Typing... The root of all evil.
+@railgun_app.post("/read")
+async def read(request: Request, auth=Depends(authentication)):  # Typing... The root of all evil.
     try:
         request = await railgun_app.validate_request(request)
-        response = railgun_app.read(request)
+        response = await railgun_app.read(request, auth)
     except:
         raise
         response = "Error"  # TODO
@@ -84,7 +84,7 @@ async def read(request: Request):  # Typing... The root of all evil.
 async def update(request: Request):  # Typing... The root of all evil.
     try:
         request = await request.json()
-        response = railgun_app.update(request)
+        response = await railgun_app.update(request)
     except JSONDecodeError:
         return "Bad request"
     except:
@@ -97,7 +97,7 @@ async def update(request: Request):  # Typing... The root of all evil.
 async def delete(request: Request):  # Typing... The root of all evil.
     try:
         request = await request.json()
-        response = railgun_app.delete(request)
+        response = await railgun_app.delete(request)
     except JSONDecodeError:
         return "Bad request"
     except:
@@ -107,10 +107,10 @@ async def delete(request: Request):  # Typing... The root of all evil.
 
 
 @railgun_app.post("/batch", dependencies=[Depends(authentication)])
-async def delete(request: Request):  # Typing... The root of all evil.
+async def batch(request: Request):  # Typing... The root of all evil.
     try:
         request = await request.json()
-        response = railgun_app.batch(request)
+        response = await railgun_app.batch(request)
     except JSONDecodeError:
         return "Bad request"
     except:
@@ -122,7 +122,7 @@ async def delete(request: Request):  # Typing... The root of all evil.
 @railgun_app.post("/telescope", dependencies=[Depends(authentication)])
 async def telescope(request: Request):  # Typing... The root of all evil.
     try:
-        request = await railgun_app.validate_request(request)
+        request = await request.json()
         response = railgun_app.telescope(request)
     except:
         raise
@@ -134,7 +134,19 @@ async def telescope(request: Request):  # Typing... The root of all evil.
 async def stellar(request: Request):  # Typing... The root of all evil.
     try:
         request = await request.json()
-        response = railgun_app.stellar(request)
+        response = await railgun_app.stellar(request)
+    except JSONDecodeError:
+        return "Bad request"
+    except:
+        raise
+        response = "Error"  # TODO
+    return response
+
+
+@railgun_app.post("/stellar/{internal_entity}/{operation}")
+async def stellar(request: Request, internal_entity, operation, auth=Depends(authentication)):  # Typing... The root of all evil.
+    try:
+        response = await railgun_app.internal_operations(internal_entity, operation, await request.json(), auth)
     except JSONDecodeError:
         return "Bad request"
     except:
@@ -145,6 +157,7 @@ async def stellar(request: Request):  # Typing... The root of all evil.
 
 @railgun_app.post("/upload", dependencies=[Depends(authentication)])
 async def upload(request: Request):  # Typing... The root of all evil.
+    # TODO forward process to railgun, the logic shouldn't be here
     pp(request.headers)
     boundary = ("--"+request.headers["content-type"].split("boundary=")[1]).encode('ascii')
 
@@ -207,7 +220,7 @@ async def upload(request: Request):  # Typing... The root of all evil.
     print(filename)
     print(temp_file_path)
     try:
-        return railgun_app.upload_file(temp_file_path, filename, metadata)
+        return await railgun_app.upload_file(temp_file_path, filename, metadata)
     except:
         # TODO
         raise
@@ -219,6 +232,7 @@ async def upload(request: Request):  # Typing... The root of all evil.
 
 @railgun_app.post("/download", dependencies=[Depends(authentication)])
 async def download(request: Request):  # Typing... The root of all evil.
+    # TODO forward process to Railgun, the logic shouldn't be here
     try:
         req = await request.json()
         if "path" in req:
@@ -230,7 +244,7 @@ async def download(request: Request):  # Typing... The root of all evil.
             return FileResponse(filepath, filename=filepath.name)
         else:
             # TODO fetch file based on entity block w/ field given
-            railgun_app.validate_request(request)
+            await railgun_app.validate_request(request)
             raise NotImplementedError()
     except JSONDecodeError:
         return "Bad request"

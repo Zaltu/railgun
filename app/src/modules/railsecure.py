@@ -30,7 +30,7 @@ TOKENIZER_ALGO = "HS256"
 TOKENIZER_EXPIRATION_MINS = 1440  # 24 hours
 
 
-def authenticate_login(railgun_app, form_data):
+async def authenticate_login(railgun_app, form_data):
     """
     Run through the steps of authenticating a new login fetching a new token.
     Check if user exists. TODO check user status?
@@ -48,7 +48,7 @@ def authenticate_login(railgun_app, form_data):
     """
     try:
         requested_user = form_data.username
-        existing_user = _get_user_exists(railgun_app, requested_user)
+        existing_user = await _get_user_exists(railgun_app, requested_user)
         # Not sure about multiple users, TODO
         if not existing_user or len(existing_user)>1:
             raise NoSuchUserException()
@@ -65,13 +65,13 @@ def authenticate_login(railgun_app, form_data):
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    except:  # TODO this distinction only exists for now to help debug
-        raise HTTPException(status_code=500, detail="Invalid Login Attempt")
+    # except:  # TODO this distinction only exists for now to help debug
+    #     raise HTTPException(status_code=500, detail="Invalid Login Attempt")
     # Here's your token
     return {"access_token": token, "token_type": "bearer"}
 
 
-def authenticate_token(railgun_app, incoming_token):
+async def authenticate_token(railgun_app, incoming_token):
     """
     Run through the steps of authenticating the access token provided in a request.
 
@@ -82,30 +82,37 @@ def authenticate_token(railgun_app, incoming_token):
         detokened = jwt.decode(incoming_token, TOKENIZER_KEY, algorithms=[TOKENIZER_ALGO])
         # Maybe user has been removed since token generation... (or disabled, TODO)
         # This has been commented out 'cause I don't this method.
-        # if not _get_user_exists(railgun_app, detokened.get('user', {}).get('username')):
-        #     raise InvalidTokenError()
+        user = await _get_user_exists(railgun_app, detokened.get('user', {}).get('login'))
+        if not user or len(user) > 1:  # User probably disabled or deleted
+            raise InvalidTokenError()
+        return {perm["uid"] for perm in (user[0]["permission_rules"] or [])}
     except InvalidTokenError:
         raise HTTPException(
             status_code=405,
             detail="Access token expired. Please log in again.",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    
 
 
-def _get_user_exists(railgun_app, requested_user):
+async def _get_user_exists(railgun_app, requested_user):
     """
     Fetch any users with the requested username, and get their (salted) password.
+    TODO hook into stellar directly for optimization
     """
-    return railgun_app.read({
-        "schema": "railgun_internal",
-        "entity": "User",
-        "read": {
-            "filters": {"filters": [["login", "is", requested_user]], "filter_operator": "AND"},
-            "return_fields": ["username", "password"],
-            "pagination": 1
-        }
-    })
+    async with railgun_app.STELLAR.database.stage() as db:
+        return await railgun_app._read(
+            db,
+            {
+                "schema": "railgun_internal",
+                "entity": "User",
+                "read": {
+                    "filters": {"filters": [["login", "is", requested_user]], "filter_operator": "AND"},
+                    "return_fields": ["login", "password", "permission_rules"],
+                    "pagination": 1
+                }
+            },
+            {1}  # Provide pseudo-admin permissions to ensure we can always validate logins
+        )
 
 
 def _compare_passwords(given_password, expected_hash):

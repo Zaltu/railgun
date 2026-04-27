@@ -4,10 +4,11 @@ from pathlib import Path
 from threading import Thread
 
 import redis
-import psycopg
 from psycopg import sql
 
+from db import PSQL
 from src.structures.returnfields import ReturnField, ReturnFieldSet
+from src.structures.structure_structure import STELLARWrapper, Schema, Entity, Field
 
 
 class StellarStellar():
@@ -15,13 +16,14 @@ class StellarStellar():
     *kira kira*
     """
     COMET_NAME = "STELLAR"  # Redis channel name
-
+    COMET_ID = str(uuid4())  # To uniquely identify this instance
     def __init__(self):
-        # To uniquely identify this instance
-        self.star_id = str(uuid4())
-
         # Prep config
-        self._load_config()
+        # TODO from env var (docker)
+        self.DB_NAME = "railgun_internal"
+        self.DB_USER = "railgun"
+        self.DB_HOST = "stellardb"
+        self.DB_PORT = 5432
 
         # For you
         self.funny_factory = {
@@ -75,85 +77,18 @@ class StellarStellar():
             }
         }
 
-        self.connect()
+        self.database = PSQL({
+            "DB_NAME": self.DB_NAME,
+            "DB_USER": self.DB_USER,
+            "DB_HOST": self.DB_HOST,
+            "DB_PORT": self.DB_PORT
+        })
 
         # *kira kira*
         self.STELLAR = self.stellar_stellar()
 
-        self.comet = redis.StrictRedis(host="stellar", port=6379, db=0)  # TODO env vars
+        self.comet = redis.StrictRedis(host="stellar", port=6379, db=0)  # TODO env vars, rename
         self.reach_for_the_stars()
-
-
-    def _load_config(self):
-        """
-        Set STELLAR DB config.
-        """
-        # TODO from env var (docker)
-        # Required object attributes
-        self.DB_NAME = "railgun_internal"
-        self.DB_USER = "railgun"
-        # Optional connection attributes
-        self.DB_PASSWORD = None
-        self.DB_HOST = "stellardb"
-        self.DB_PORT = 6969
-
-
-    def connect(self):
-        """
-        Connect to STELLAR DB (railgun internal) through psycopg.
-        Gets the DB version as simple check that the connection was successful.
-
-        :raises ConnectionError: if the version cannot be fetched. This will and should crash the program.
-        STELLAR is required.
-        """
-        self.database = psycopg.connect(
-            dbname=self.DB_NAME,
-            user=self.DB_USER,
-            host=self.DB_HOST,
-            autocommit=True
-        )
-        self.version = self._run_command("SELECT version()")[0][0]  # lol
-        if not self.version:
-            raise ConnectionError
-
-
-    def disconnect(self):
-        """
-        Closes the DB connection.
-        Thoeretically only called when the program closes, never called explicitely.
-        """
-        self.database.close()
-
-
-    def _run_command(self, command, params=None, include_descriptors=False, return_style="solo"):
-        """
-        Execute a (dirty) command. Sanitation is expected to happen first.
-
-        :param str command: Clean SQL command to execute.
-        :param list params: additional params to pass to psycopg cursor.execute. Unused, default None.
-        :param bool include_descriptors: include the descriptors (column names), default False.
-        :param str return_style: how much data this query will return. solo|multi|None
-
-        :returns: SQL result of executed command.
-        :rtype: list|tuple
-        """
-        try:
-            with self.database.cursor() as cur:
-                cur.execute(command, params)
-                match return_style:
-                    case "multi":
-                        values = cur.fetchall()
-                        if include_descriptors:
-                            fieldcodes = [desc[0] for desc in cur.description]
-                    case "solo":
-                        values = cur.fetchone()
-                    case _:
-                        # Operation not expected to produce anything.
-                        return
-        except Exception as e:
-            raise
-
-        return (values, fieldcodes) if include_descriptors else values
 
 
     def reach_for_the_stars(self):
@@ -184,40 +119,31 @@ class StellarStellar():
                     # Only listen for messages from the stars that aren't our own.
                     # Assume we update Stellar when we shoot for the stars for this
                     # instance in the first place.
-                    if request["star"] != self.star_id:
-                        print("A comet streaks across the sky!")
+                    if request["comet_id"] != StellarStellar.COMET_ID:
+                        print("A comet streaks across the sky!")  # TODO log
                         self.stellar_update(request)
 
         self._listener_thread = Thread(target=listener_handler, daemon=True)
         self._listener_thread.start()
 
 
-    def shoot_for_the_stars(self, level, schema=None, entity=None):
+    def shoot_for_the_stars(self, comet):
         """
         Send out notification to all Railgun apps that the schema has changed.
         This is a fire-and-forget operation.
 
-        :param str level: update level, all|schema|entity
-        :param int schema: schema to update if level is schema or entity
-        :param int entity: entity to update if level is entity
+        :param Comet comet: configured Comet object
         """
-        cannonball = {
-            "level": level,
-            "star": self.star_id
-        }
-        if schema:
-            cannonball["schema"] = schema
-        if entity:
-            cannonball["entity"] = entity
+        print("Shooting for the stars...")  # TODO log
         # Shoot for the stars
-        self.comet.publish(StellarStellar.COMET_NAME, json.dumps(cannonball))
+        self.comet.publish(StellarStellar.COMET_NAME, json.dumps(comet))
         # Update ourself immediately though, before we even actually return to RG.
         # This technically makes stellar calls slower to execute, but ensures that
         # further calls to this instance that immediately follow this one will have
         # the correct schema available.
-        # In production, this logic would require a session_uuid manager/HAProxy to 
+        # In production, this logic would require a session_uuid manager/HAProxy to
         # ensure subsequent requests are triaged to the same endpoint.
-        self.stellar_update(cannonball)
+        self.stellar_update(comet)
 
 
     def fetch_schemas(self):
@@ -229,7 +155,7 @@ class StellarStellar():
         :rtype: list
         """
         COMMAND = """SELECT code, uid, name, host, db_type, _ss_archived FROM schemas;"""
-        return self._run_command(COMMAND, return_style="multi")
+        return self.database._run_command(COMMAND, return_style="multi")
 
 
     def fetch_entities(self, schema):
@@ -243,13 +169,19 @@ class StellarStellar():
         :rtype: list
         """
         COMMAND = sql.SQL("""
-            SELECT entities.code, entities.soloname, entities.multiname, entities.display_name_col, entities.uid, entities._ss_archived
+            SELECT entities.code, entities.soloname, entities.multiname, entities.display_name_col, entities.uid, entities._ss_archived, COALESCE(_ss_permission_rules_entities.permission_rules__ss_permission_rules_entities::jsonb, _ss_permission_rules_entities.permission_rules__ss_permission_rules_entities::jsonb) AS permission_rules
             FROM entities
             INNER JOIN _ss_entities_schemas ON _ss_entities_schemas.fk_entities = entities.uid
             INNER JOIN schemas ON schemas.uid = _ss_entities_schemas.fk_schemas
+            LEFT JOIN (
+                SELECT _ss_permission_rules_entities.fk_entities, json_agg(json_build_object('uid', permission_rules.uid, 'name', permission_rules.name, 'filter', permission_rules.filters)) AS permission_rules__ss_permission_rules_entities
+                FROM _ss_permission_rules_entities
+                LEFT JOIN permission_rules ON _ss_permission_rules_entities.fk_permission_rules = permission_rules.uid
+                GROUP BY _ss_permission_rules_entities.fk_entities
+            ) _ss_permission_rules_entities ON _ss_permission_rules_entities.fk_entities = entities.uid
             WHERE schemas.uid = (%s)"""
         )
-        return self._run_command(COMMAND, (schema,), return_style="multi")
+        return self.database._run_command(COMMAND, (schema,), return_style="multi")
 
 
     def fetch_fields(self, entity):
@@ -271,7 +203,7 @@ class StellarStellar():
             INNER JOIN entities ON entities.uid = _ss_fields_entities.fk_entities
             WHERE entities.uid = (%s)"""
         )
-        return self._run_command(COMMAND, (entity,), return_style="multi")
+        return self.database._run_command(COMMAND, (entity,), return_style="multi")
     
     #####################################
     ########  Stellar  Stellar  #########
@@ -286,71 +218,88 @@ class StellarStellar():
         :returns: STELLAR STELLAR
         :rtype: STELLAR
         """
-        STELLAR = {}
-        schemas = self.fetch_schemas()
+        STELLAR = STELLARWrapper()
+        schemas = self.fetch_schemas()  # BUG should only pull "public-facing" schemas
         for schema in schemas:
-            STELLAR[schema[0]] = {
-                "code": schema[0],
-                "id": schema[1],
-                "name": schema[2],
-                "host": schema[3],
-                "db_type": schema[4],
-                "archived": schema[5]
-            }
-            STELLAR[schema[0]]["entities"] = self.stellar_schema(schema[1])
+            STELLAR[schema["code"]] = Schema(
+                code=schema["code"],
+                id=schema["uid"],
+                name=schema["name"],
+                host=schema["host"],
+                db_type=schema["db_type"],
+                archived=schema["_ss_archived"]
+            )
+            self.stellar_schema(STELLAR[schema["code"]])
         return STELLAR
 
 
-    def stellar_schema(self, schema_id):
+    def stellar_schema(self, schema):
         """
         *kira kira*
         Fetch the STELLAR of a specific schema.
-        This does not update the STELLAR property. Assignation must be done by caller.
+        This *does* update the STELLAR property directly.
 
-        :param int schema_id: ID of the schema to fetch
-
-        :returns: STELLAR SCHEMA
-        :rtype: STELLAR
+        :param Schema schema: Schema object of the schema for which to fetch the entities
         """
-        STELLAR = {}
-        schema_entities = self.fetch_entities(schema_id)
+        schema_entities = self.fetch_entities(schema.id)
+        new_entity_data = {}
         for entity in schema_entities:
-            STELLAR[entity[1]] = {
-                "code": entity[0],
-                "soloname": entity[1],
-                "multiname": entity[2],
-                "display_name_col": entity[3],
-                "id": entity[4],
-                "archived": entity[5]
-            }
-            STELLAR[entity[1]]["fields"] = self.stellar_entity(entity[4])
-        return STELLAR
+            # Register this entity
+            new_entity_data[entity["soloname"]] = Entity(
+                schema=schema,
+                code=entity["code"],
+                soloname=entity["soloname"],
+                multiname=entity["multiname"],
+                display_name_col=entity["display_name_col"],
+                id=entity["uid"],
+                archived=entity["_ss_archived"],
+                permissionRules=entity["permission_rules"] or []
+            )
+            # Then register this entity's fields
+            self.stellar_entity(new_entity_data[entity["soloname"]])
+        # Once we have all the necessary data, swap out any live STELLAR data for the new stuff.
+        # This must be done at the end to ensure an asynchoneous call doesn't come in mid-update
+        # and get a half-baked schema.
+        schema.finalize_entity_data(new_entity_data)
 
 
-    def stellar_entity(self, entity_id):
+    def stellar_entity(self, entity, reset_return_fields=False):
         """
         *kira kira*
         Fetch the STELLAR of a specific entity.
-        This does not update the STELLAR property. Assignation must be done by caller.
+        This *does* update the STELLAR property directly.
 
-        :param int entity_id: ID of the entity to fetch
+        Updating the ReturnFields is tricky due to sync issues.
+        If this is being called during a schema load, the schema load process will take care of updating the ReturnFields
+        If this is being called during an stellar update on the entity, the entity itself still needs a kick to repopulate it's ReturnFields.
 
-        :returns: STELLAR ENTITY
-        :rtype: STELLAR
+        :param Entity entity: Entity object of the entity for which to fetch the fields
+        :param bool reset_return_fields: whether to attempt to set the return fields of the entities fields immediately
         """
-        STELLAR = {}
-        entity_fields = self.fetch_fields(entity_id)
+        entity_fields = self.fetch_fields(entity.id)
+        new_field_data = {}
         for field in entity_fields:
-            STELLAR[field[0]] = {
-                "code": field[0],
-                "name": field[1],
-                "type": field[2],
-                "id": field[3],
-                "index": field[4],
-                "params": field[5],
-                "archived": field[6]
-            }
-        return STELLAR
+            # Register this field
+            new_field_data[field["code"]] = Field(
+                entity=entity,
+                code=field["code"],
+                name=field["name"],
+                type=field["field_type"],
+                id=field["uid"],
+                index=field["indexed"],
+                params=field["params"],
+                archived=field["_ss_archived"]
+            )
+        # Once we have all the necessary data, swap out any live STELLAR data for the new stuff.
+        # This must be done at the end to ensure an asynchoneous call doesn't come in mid-update
+        # and get a half-baked schema. Additionally, we sometimes need to update the return fields
+        # of the entity. If we know that the schema is defined already but assume a change to the
+        # entity layer, we won't call stellar_schema, so we need to re-parse this entity's return
+        # fields.
+        if reset_return_fields:
+            entity.finalize_field_data(new_field_data)
+        else:
+            entity.fields = new_field_data
 
 
     def stellar_update(self, request):
@@ -360,20 +309,22 @@ class StellarStellar():
 
         :param dict request: STELLAR update request.
         """
-        match request["level"]:
-            case "all":
-                self.STELLAR = self.stellar_stellar()
-            case "schema":
-                self.STELLAR[request["schema"]]["entities"] = self.stellar_schema(
-                    self.STELLAR[request["schema"]]["id"]
-                )
-            case "entity":
-                self.STELLAR[request["schema"]]["entities"][request["entity"]]["fields"] = self.stellar_entity(
-                    self.STELLAR[request["schema"]]["entities"][request["entity"]]["id"]
-                )
+        if "entity" in request:
+            # We assume an entity will always be provided in tandem with a schema
+            self.stellar_entity(
+                self.STELLAR[request["schema"]].entities[request["entity"]],
+                reset_return_fields=True
+            )
+        elif "schema" in request:
+            # Assume that we will not be provided an entity if we only need to update the schema
+            self.stellar_schema(
+                self.STELLAR[request["schema"]]
+            )
+        else:
+            self.STELLAR = self.stellar_stellar()
 
 
-    def create_field(self, request, db):
+    async def create_field(self, request, db, stellardb):
         """
         Create a DB column and register to Stellar.
         The steps of field creation depend on the type of field, and so are offloaded to factory
@@ -394,35 +345,36 @@ class StellarStellar():
         """
         if request["data"]["type"] not in self._field_factory["create"]:
             raise NotImplementedError
+        if request["data"]["code"] == "type":
+            raise NotImplementedError  # TODO better error messaging
 
         # Offload creation
-        self._field_factory["create"][request["data"]["type"]](request, db)
+        # Creation subfunction must be async
+        comet = await self._field_factory["create"][request["data"]["type"]](request, db, stellardb)
 
-        # Stellar Stellar
-        self.shoot_for_the_stars(level="entity", schema=request["schema"], entity=request["entity"])
-
-        return True
+        # Send the default comet if a specific one is not set
+        return comet or Comet(schema=request["schema"], entity=request["entity"])
 
 
-    def update_field(self, request, db):
+    async def update_field(self, request, db, stellardb):
         """
         Update a field's parameters. The possibilities vary based on field type, so offloaded
         to a factory function.
         Most types actually don't have update options.
         """
-        field_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]["fields"][request["data"]["code"]]
+        field_sc = self.STELLAR[request["schema"]].entities[request["entity"]].fields[request["data"]["code"]]
         if field_sc["type"] not in self._field_factory["update"]:
             raise NotImplementedError
 
-        # Offload creation
-        self._field_factory["update"][field_sc["type"]](request, db)
+        # Offload update
+        # Update subfunction must be async
+        await self._field_factory["update"][field_sc["type"]](request, db, stellardb)
 
         # Stellar Stellar
-        self.shoot_for_the_stars(level="entity", schema=request["schema"], entity=request["entity"])
-        return True
+        return Comet(schema=request["schema"], entity=request["entity"])
 
 
-    def delete_field(self, request, db):
+    async def delete_field(self, request, db, stellardb):
         """
         Archive a field, or delete it if it's already archived.
         Archiving a field involves:
@@ -449,30 +401,31 @@ class StellarStellar():
         :returns: true to validate deletion
         :rtype: bool
         """
-        stellar_field = self.STELLAR[request["schema"]]["entities"][request["entity"]]["fields"][request["data"]["code"]]
-        if not stellar_field["archived"]:
+        stellar_field = self.STELLAR[request["schema"]].entities[request["entity"]].fields[request["data"]["code"]]
+        if not stellar_field.archived:
             # It hasn't been "hidden" yet. Hide it first.
-            HIDE_COMMAND = sql.SQL("""
-                UPDATE fields
-                SET _ss_archived = true
-                WHERE uid = {uid}
-            """).format(
-                uid=stellar_field["id"]
-            )
-            self._run_command(HIDE_COMMAND, return_style=None)
+            HIDE_OP = {
+                "table": "fields",
+                "entity": "Field",
+                "entity_id": stellar_field.id,
+                "data": {
+                    "_ss_archived": True
+                }
+            }
+            await stellardb.update(HIDE_OP)
         else:
             # This is the real deletion. Boom goes the dynamite
-            if stellar_field["type"] not in self._field_factory["delete"]:
+            if stellar_field.type not in self._field_factory["delete"]:
                 raise NotImplementedError
             # Offload deletion
-            self._field_factory["delete"][stellar_field["type"]](request, db)
+            # Delete subfunction must be async
+            await self._field_factory["delete"][stellar_field.type](request, db, stellardb)
 
         # Stellar Stellar
-        self.shoot_for_the_stars(level="entity", schema=request["schema"], entity=request["entity"])
-        return True
+        return Comet(schema=request["schema"], entity=request["entity"])
 
 
-    def create_entity(self, request, db):
+    async def create_entity(self, request, db, stellardb):
         """
         *kira kira*
         Create a new table in a DB.
@@ -501,46 +454,82 @@ class StellarStellar():
         """
         data = request["data"]
         try:
-            assert data["code"] not in self.STELLAR[request["schema"]]["entities"]
+            assert data["code"] not in self.STELLAR[request["schema"]].entities
         except AssertionError:
             return "Table with the name {name} already exists".format(name=data["code"])
         # Real table creation
-        db.create_table(data["code"])
+        await db.create_table(data["code"])
 
         # Stellar table creation
-        ENT_COMMAND = sql.SQL("""
-            INSERT INTO entities (code, multiname, soloname, display_name_col) VALUES ((%s), (%s), (%s), (%s)) RETURNING uid
-        """)
-        ent_id = self._run_command(ENT_COMMAND, (data["code"], data["multiname"], data["soloname"], 'code'))[0]
+        ENT_OP = {
+            "table": "entities",
+            "entity": "Entity",
+            "data": {
+                "code": data["code"],  # A bit lossy to rebuild data, but prevents weird values from being passed
+                "multiname": data["multiname"],
+                "soloname": data["soloname"],
+                "display_name_col": "code"
+            }
+        }
+        ent_id = (await stellardb.create(ENT_OP))["uid"]
 
         # Stellar table Relation creation
-        REL_COMMAND = sql.SQL("""
-            INSERT INTO _ss_entities_schemas (entities_col, fk_entities, fk_schemas, schemas_col) VALUES ((%s), (%s), (%s), (%s))
-        """)
-        self._run_command(REL_COMMAND, ('schema', ent_id, self.STELLAR[request["schema"]]["id"], 'entities'), return_style=None)
+        REL_OP = {
+            "table": "_ss_entities_schemas",
+            "entity": "_SS_CONNECTION",  # unused in practice
+            "data": {
+                "entities_col": "schema",
+                "fk_entities": ent_id,
+                "fk_schemas": self.STELLAR[request["schema"]].id,
+                "schemas_col": "entities"
+            }
+        }
+        await stellardb.create(REL_OP)
 
         # Stellar Field and field Relation Creation
-        FIELD_COMMANDS = [
-            sql.SQL("""
-                INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('uid', 'ID', 'INT', true, '{}') RETURNING uid
-            """),
-            sql.SQL("""
-                INSERT INTO fields (code, name, field_type, indexed, params) VALUES ('code', 'Display Name', 'TEXT', false, '{}') RETURNING uid
-            """)
+        FIELD_OPS = [
+            {
+                "table": "fields",
+                "entity": "Field",
+                "data": {
+                    "code": "uid",
+                    "name": "ID",
+                    "field_type": "INT",
+                    "indexed": True,
+                    "params": "{}"
+                }
+            },
+            {
+                "table": "fields",
+                "entity": "Field",
+                "data": {
+                    "code": "code",
+                    "name": "Display Name",
+                    "field_type": "TEXT",
+                    "indexed": False,
+                    "params": "{}"
+                }
+            }
         ]
-        FREL_COMMAND = sql.SQL("""
-            INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ((%s), (%s), (%s), (%s))
-        """)
-        for com in FIELD_COMMANDS:
-            field_id = self._run_command(com)[0]
-            self._run_command(FREL_COMMAND, ('entity', field_id, ent_id, 'fields'), return_style=None)
+        FREL_OP_TEMPLATE = {
+            "table": "_ss_fields_entities",
+            "entity": "_SS_CONNECTION",  # unused in practice
+            "data": {
+                "fields_col": "entity",
+                "fk_fields": None,  # POPULATED DURING ITERATION
+                "fk_entities": ent_id,
+                "entities_col": "fields"
+            }
+        }
+        for op in FIELD_OPS:
+            field_id = (await stellardb.create(op))["uid"]
+            FREL_OP_TEMPLATE["data"]["fk_fields"] = field_id
+            await stellardb.create(FREL_OP_TEMPLATE)
 
-        # Stellar Stellar
-        self.shoot_for_the_stars("schema", schema=request["schema"])
-        return True
+        return Comet(schema=request["schema"])
 
 
-    def update_entity(self, request, db):
+    async def update_entity(self, request, db, stellardb):
         """
         There isn't anything we really want to expose to the user in regards to actual
         ALTER TABLE commands. Column creation is handled separately, and things like
@@ -549,7 +538,7 @@ class StellarStellar():
         raise NotImplementedError
 
 
-    def delete_entity(self, request, db):
+    async def delete_entity(self, request, db, stellardb):
         """
         Archive an entity, or delete it if it's already been archived.
 
@@ -587,81 +576,76 @@ class StellarStellar():
         :rtype: bool
         """
         # Check if already archived
-        prearchived = self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["archived"]
+        prearchived = self.STELLAR[request["schema"]].entities[request["data"]["type"]].archived
 
         if not prearchived:
             # It hasn't been "hidden" yet. Hide it first.
-            HIDE_COMMAND = sql.SQL("""
-                UPDATE entities
-                SET _ss_archived = true
-                WHERE uid = {uid}
-            """).format(
-                uid=sql.Literal(self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["id"])
-            )
-            self._run_command(HIDE_COMMAND, return_style=None)
+            HIDE_OP = {
+                "table": "entities",
+                "entity": "Entity",
+                "entity_id": self.STELLAR[request["schema"]].entities[request["data"]["type"]].id,
+                "data": {
+                    "_ss_archived": True
+                }
+            }
+            await stellardb.update(HIDE_OP)
         else:
             # This is a real delete. Boom goes the dynamite.
 
             # Remove any multi/entity fields
-            for field in self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["fields"].values():
-                if field["type"] in ["ENTITY", "MULTIENTITY"]:
+            for field in self.STELLAR[request["schema"]].entities[request["data"]["type"]].fields.values():
+                if field.type in ["ENTITY", "MULTIENTITY"]:
                     # HACK to fully delete the field in one go. EXTREMELY BAD
-                    self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["fields"][field["code"]]["archived"] = True
+                    self.STELLAR[request["schema"]].entities[request["data"]["type"]].fields[field.code].archived = True
 
                     # Call the internal function directly to avoid needlessly shooting for the stars.
-                    self._field_delete_entity({
+                    # TODO, no longer necessary
+                    await self._field_delete_entity({
                         "part": "field",
                         "request_type": "delete",
                         "schema": request["schema"],
                         "entity": request["data"]["type"],
                         "data": {
-                            "code": field["code"]
+                            "code": field.code
                         }
                     }, db)
 
             # Drop entity table
-            db.delete_table(self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["code"])
+            await db.delete_table(self.STELLAR[request["schema"]].entities[request["data"]["type"]].code)
 
             # Drop entity record
-            DEL_ENT_COMMAND = sql.SQL("""
-                DELETE FROM entities
-                WHERE uid = {uid}
-            """).format(
-                uid=sql.Literal(self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["id"])
-            )
-            self._run_command(DEL_ENT_COMMAND, return_style=None)
+            DEL_ENT_OP = {
+                "table": "entities",
+                "entity": "Entity",
+                "entity_id": self.STELLAR[request["schema"]].entities[request["data"]["type"]].id
+            }
+            await stellardb.delete(DEL_ENT_OP)
 
             # Drop field records
-            for field in self.STELLAR[request["schema"]]["entities"][request["data"]["type"]]["fields"].values():
-                DEL_FIELD_COMMAND = sql.SQL("""
-                    DELETE FROM fields
-                    WHERE uid = {uid}
-                """).format(
-                    uid=sql.Literal(field["id"])
-                )
-                self._run_command(DEL_FIELD_COMMAND, return_style=None)
+            DEL_FIELD_OP_TEMPLATE = {
+                "table": "fields",
+                "entity": "Field",
+                "entity_id": None  # POPULATED DURING ITERATION
+            }
+            for field in self.STELLAR[request["schema"]].entities[request["data"]["type"]].fields.values():
+                DEL_FIELD_OP_TEMPLATE["entity_id"] = field.id
+                await stellardb.delete(DEL_FIELD_OP_TEMPLATE)
 
-        # Stellar Stellar
-        self.shoot_for_the_stars(level="schema", schema=request["schema"])
-        return True
+        return Comet(schema=request["schema"])
 
 
-    def update_schema(self, request, db):
-        """
-        There really isn't anything that can be updated in regards to the schema level.
-        If you want to update the display name, no need to pass through Stellar Stellar.
-        """
+    async def update_schema(self, request, db, stellardb):
         raise NotImplementedError
 
 
-    def release_schema(self, request, db):
+    async def release_schema(self, request, db, stellardb):
         raise NotImplementedError
 
 
     #####################################
     #########   FIELD  TYPES   ##########
     #####################################
-    def _field_create_simple(self, request, db, nullable=True, default=None):
+    async def _field_create_simple(self, request, db, stellardb, nullable=True, default=None):
         """
         Create a "simple" field.
         Many simple types have nothing special to do beyond:
@@ -673,27 +657,32 @@ class StellarStellar():
         :param db._database.Database db: the physical DB connection
 
         :raises: NotImplementedError gets bubbled up from the DB connection if the type isn't valid
-        :returns: true to validate creation
-        :rtype: bool
         """
         # Create physical DB field
         # This will raise NotImplementedError if the type isn't valid for this DB connector.
-        db.create_field(self.STELLAR[request["schema"]]["entities"][request["entity"]]["code"], request["data"]["code"], request["data"]["type"], nullable=nullable, default=default)
+        await db.create_field(self.STELLAR[request["schema"]].entities[request["entity"]].code, request["data"]["code"], request["data"]["type"], nullable=nullable, default=default)
 
         # Allow storing of generic params for normal fields. Can be used by frontends.
         F_PARAMS = request["data"].get("options", {})
         # Create Stellar record
-        F_COMMAND = sql.SQL("""
-            INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), (%s), false, (%s)) RETURNING uid;
-        """)
-        f_id = self._run_command(F_COMMAND, (request["data"]["code"], request["data"]["name"], request["data"]["type"], json.dumps(F_PARAMS)))[0]
+        F_OP = {
+            "table": "fields",
+            "entity": "Field",
+            "data": {
+                "code": request["data"]["code"],
+                "name": request["data"]["name"],
+                "field_type": request["data"]["type"],
+                "indexed": False,
+                "params": json.dumps(F_PARAMS),  # TODO is the dumps needed at this level?
+            }
+        }
+        f_id = (await stellardb.create(F_OP))["uid"]
 
         # Create Stellar relation
-        self.__create_stellar_field_relation(f_id, self.STELLAR[request["schema"]]["entities"][request["entity"]]["id"])
-        return True
+        await __create_stellar_field_relation(f_id, self.STELLAR[request["schema"]].entities[request["entity"]].id, stellardb)
 
 
-    def _field_create_bool(self, request, db):
+    async def _field_create_bool(self, request, db, stellardb):
         """
         SQL booleans are tertiary... Make sure to set them as not nullable with false (unchecked) default.
         The rest is the same though.
@@ -703,13 +692,11 @@ class StellarStellar():
         :param db._database.Database db: the physical DB connection
 
         :raises: NotImplementedError gets bubbled up from the DB connection if the type isn't valid
-        :returns: true to validate creation
-        :rtype: bool
         """
-        return self._field_create_simple(request, db, nullable=False, default="false")
+        await self._field_create_simple(request, db, stellardb, nullable=False, default="false")
 
 
-    def _field_create_list(self, request, db):
+    async def _field_create_list(self, request, db, stellardb):
         """
         List fields require some extra setup to create the constraint structure used by Railgun.
         We do not use enums for list fields as they cannot be easily modified in SQL.
@@ -740,24 +727,27 @@ class StellarStellar():
         :rtype: bool
         """
         # Create field
-        db.create_field(self.STELLAR[request["schema"]]["entities"][request["entity"]]["code"], request["data"]["code"], "TEXT")
+        await db.create_field(self.STELLAR[request["schema"]].entities[request["entity"]].code, request["data"]["code"], "TEXT")
 
         # Create Stellar record
-        # TODO store additional custom params
-        LF_PARAMS = {
-            "constraints": request["data"]["options"]
+        LF_OP = {
+            "table": "fields",
+            "entity": "Field",
+            "data": {
+                "code": request["data"]["code"],
+                "name": request["data"]["name"],
+                "field_type": "LIST",
+                "indexed": False,
+                "params": json.dumps({"constraints": request["data"]["options"]})  # TODO is the dumps needed at this level?
+            }
         }
-        LF_COMMAND = sql.SQL("""
-            INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), (%s), false, (%s)) RETURNING uid;
-        """)
-        f_id = self._run_command(LF_COMMAND, (request["data"]["code"], request["data"]["name"], "LIST", json.dumps(LF_PARAMS)))[0]
+        f_id = (await stellardb.create(LF_OP))["uid"]
 
         # Create Stellar relation
-        self.__create_stellar_field_relation(f_id, self.STELLAR[request["schema"]]["entities"][request["entity"]]["id"])
-        return True
+        await __create_stellar_field_relation(f_id, self.STELLAR[request["schema"]].entities[request["entity"]].id, stellardb)
 
 
-    def _field_create_entity(self, request, db):
+    async def _field_create_entity(self, request, db, stellardb):
         """
         Creating an entity link is the most convoluted process of all. Thanks SQL.
         It generally involves the following steps:
@@ -791,16 +781,15 @@ class StellarStellar():
         """
         REL_TABLE = "_ss_{table}_{ftable}"
         # Create source field record
-        # TODO store additional custom params
         SF_PARAMS = {
             "constraints":{
             }
         }
-        table_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]
+        table_sc = self.STELLAR[request["schema"]].entities[request["entity"]]
         for ftype in request["data"]["options"]:
-            ftable = self.STELLAR[request["schema"]]["entities"][ftype]["code"]
+            ftable = self.STELLAR[request["schema"]].entities[ftype].code
             # Create relation table
-            tab = REL_TABLE.format(table=table_sc["code"], ftable=ftable)
+            tab = REL_TABLE.format(table=table_sc.code, ftable=ftable)
             REL_TABLE_COMMAND = sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {relation} (
                     {table_col} TEXT NOT NULL,
@@ -811,39 +800,51 @@ class StellarStellar():
                 );
             """).format(
                 relation=sql.Identifier(tab),
-                table_col=sql.Identifier(table_sc["code"]+"_col"),
-                fk_table=sql.Identifier("fk_"+table_sc["code"]),
-                table=sql.Identifier(table_sc["code"]),
+                table_col=sql.Identifier(table_sc.code+"_col"),
+                fk_table=sql.Identifier("fk_"+table_sc.code),
+                table=sql.Identifier(table_sc.code),
                 fk_ftable=sql.Identifier("fk_"+ftable),
                 ftable=sql.Identifier(ftable),
                 ftable_col=sql.Identifier(ftable+"_col")
             )
-            db._run_command(REL_TABLE_COMMAND, return_style=None)
+            await db.execute(REL_TABLE_COMMAND)  # Reminder, this is a non-standard table
 
             # Create foreign field record
             FF_PARAMS = {
                 "constraints":{
                     request['entity']:{
                         "relation": tab,
-                        "table": table_sc["code"],
+                        "table": table_sc.code,
                         "col": request["data"]["code"]
                     }
                 }
             }
             FF_CODE = f"{table_sc['code']}"
             # Since we're generating a field, make sure the code isn't already reserved
-            if FF_CODE in self.STELLAR[request["schema"]]["entities"][ftype]["fields"]:
+            if FF_CODE in self.STELLAR[request["schema"]].entities[ftype].fields:
                 FF_CODE+="_1"
                 i = 2
-                while FF_CODE in self.STELLAR[request["schema"]]["entities"][ftype]["fields"]:
+                while FF_CODE in self.STELLAR[request["schema"]].entities[ftype].fields:
                     FF_CODE = FF_CODE[:-1] + str(i)
                     i+=1
-            FF_NAME = f"{table_sc['multiname']} <-> {self.STELLAR[request['schema']]['entities'][ftype]['multiname']}"
-            FF_COMMAND = sql.SQL("""
-                INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), 'MULTIENTITY', false, (%s)) RETURNING uid
-            """)
-            f_id = self._run_command(FF_COMMAND, (FF_CODE, FF_NAME, json.dumps(FF_PARAMS)))[0]
-            self.__create_stellar_field_relation(f_id, self.STELLAR[request['schema']]['entities'][ftype]["id"])
+            FF_NAME = f"{table_sc['multiname']} <-> {self.STELLAR[request['schema']].entities[ftype].multiname}"
+            FF_OP = {
+                "table": "fields",
+                "entity": "Field",
+                "data": {
+                    "code": FF_CODE,
+                    "name": FF_NAME,
+                    "field_type": "MULTIENTITY",
+                    "indexed": False,
+                    "params": json.dumps(FF_PARAMS)  # TODO is the dumps necessary at this level?
+                }
+            }
+            f_id = (await stellardb.create(FF_OP))["uid"]
+            # FF_COMMAND = sql.SQL("""
+            #     INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), 'MULTIENTITY', false, (%s)) RETURNING uid
+            # """)
+            # f_id = self.database._run_command(FF_COMMAND, (FF_CODE, FF_NAME, json.dumps(FF_PARAMS)))[0]["uid"]
+            await __create_stellar_field_relation(f_id, self.STELLAR[request['schema']].entities[ftype].id, stellardb)
 
             # Prep constraint type for source field record
             SF_PARAMS["constraints"][ftype] = {
@@ -852,18 +853,30 @@ class StellarStellar():
                 "col": FF_CODE
             }
 
-        SF_COMMAND = sql.SQL("""
-            INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), (%s), false, (%s)) RETURNING uid
-        """)
-        f_id = self._run_command(SF_COMMAND, (request["data"]["code"], request["data"]["name"], request["data"]["type"], json.dumps(SF_PARAMS)))[0]
-        self.__create_stellar_field_relation(f_id, table_sc["id"])
+        SF_OP = {
+            "table": "fields",
+            "entity": "Field",
+            "data": {
+                "code": request["data"]["code"],
+                "name": request["data"]["name"],
+                "field_type": request["data"]["type"],
+                "indexed": False,
+                "params": json.dumps(SF_PARAMS)  # TODO is the dumps necessary at this level?
+            }
+        }
+        f_id = (await stellardb.create(SF_OP))["uid"]
+        # SF_COMMAND = sql.SQL("""
+        #     INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), (%s), false, (%s)) RETURNING uid
+        # """)
+        # f_id = self.database._run_command(SF_COMMAND, (request["data"]["code"], request["data"]["name"], request["data"]["type"], json.dumps(SF_PARAMS)))[0]["uid"]
+        await __create_stellar_field_relation(f_id, table_sc.id, stellardb)
 
         # Comet needs to be at schema level to capture reverse fields
-        self.shoot_for_the_stars(level="schema", schema=request["schema"])
-        return True
+        # self.shoot_for_the_stars(level="schema", schema=request["schema"])
+        return Comet(schema=request["schema"])
 
 
-    def _field_update_list(self, request, _):
+    async def _field_update_list(self, request, _, stellardb):
         """
         Update a list field. Effectively update the possible options for a list field.
         This involves:
@@ -878,21 +891,21 @@ class StellarStellar():
         :returns: true to validate creation
         :rtype: bool
         """
-        field_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]["fields"][request["data"]["code"]]
-        LF_PARAMS = field_sc["params"]
+        field_sc = self.STELLAR[request["schema"]].entities[request["entity"]].fields[request["data"]["code"]]
+        LF_PARAMS = field_sc.params
         LF_PARAMS["constraints"] = request["data"]["options"]
-        COMMAND = sql.SQL("""
-            UPDATE fields
-            SET params = {params}
-            WHERE uid = {uid}
-        """).format(
-            params=json.dumps(LF_PARAMS),
-            uid=field_sc["id"]
-        )
-        self._run_command(COMMAND, return_style=None)
+        OP = {
+            "table": "fields",
+            "entity": "Field",
+            "entity_id": field_sc.id,
+            "data": {
+                "params": json.dumps(LF_PARAMS)  # TODO is the dumps necessary at this level?
+            }
+        }
+        await stellardb.update(OP)
 
 
-    def _field_update_entity(self, request, db):
+    async def _field_update_entity(self, request, db, stellardb):
         """
         Updating an entity link is a convoluted process. Thanks SQL.
         It generally involves the following steps:
@@ -919,30 +932,25 @@ class StellarStellar():
         While we assume it to be easier for any frontend to send a full list of entities the field should allow linking to,
         updating a multi-entity field to remove a link is currently not supported.
         Of the list sent, anything that doesn't already exist will be created. Everything else is ignored. Removing a link is currently not possible.
-        TODO
-        Change field (display) name with update call.
 
         :param dict request: the entity field creation request
         :param db._database.Database db: physical DB connection
-
-        :returns: true to validate creation
-        :rtype: bool
         """
         REL_TABLE = "_ss_{table}_{ftable}"
 
 
-        table_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]
-        field_sc = table_sc["fields"][request["data"]["code"]]
+        table_sc = self.STELLAR[request["schema"]].entities[request["entity"]]
+        field_sc = table_sc.fields[request["data"]["code"]]
         # Prepare source field record
-        SF_UPDATES = field_sc["params"]
+        SF_UPDATES = field_sc.params
 
         for ftype in request["data"]["options"]:
             if ftype in SF_UPDATES["constraints"]:
                 # Field link already defined, skip it.
                 continue
-            ftable = self.STELLAR[request["schema"]]["entities"][ftype]["code"]
+            ftable = self.STELLAR[request["schema"]].entities[ftype].code
             # Create relation table
-            tab = REL_TABLE.format(table=table_sc["code"], ftable=ftable)
+            tab = REL_TABLE.format(table=table_sc.code, ftable=ftable)
             REL_TABLE_COMMAND = sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {relation} (
                     {table_col} TEXT NOT NULL,
@@ -953,39 +961,51 @@ class StellarStellar():
                 );
             """).format(
                 relation=sql.Identifier(tab),
-                table_col=sql.Identifier(table_sc["code"]+"_col"),
-                fk_table=sql.Identifier("fk_"+table_sc["code"]),
-                table=sql.Identifier(table_sc["code"]),
+                table_col=sql.Identifier(table_sc.code+"_col"),
+                fk_table=sql.Identifier("fk_"+table_sc.code),
+                table=sql.Identifier(table_sc.code),
                 fk_ftable=sql.Identifier("fk_"+ftable),
                 ftable=sql.Identifier(ftable),
                 ftable_col=sql.Identifier(ftable+"_col")
             )
-            db._run_command(REL_TABLE_COMMAND, return_style=None)
+            await db.execute(REL_TABLE_COMMAND)
 
             # Create foreign field record
             FF_PARAMS = {
                 "constraints":{
                     request['entity']:{
                         "relation": tab,
-                        "table": table_sc["code"],
+                        "table": table_sc.code,
                         "col": request["data"]["code"]
                     }
                 }
             }
             FF_CODE = f"{table_sc['code']}"
             # Since we're generating a field, make sure the code isn't already reserved
-            if FF_CODE in self.STELLAR[request["schema"]]["entities"][ftype]["fields"]:
+            if FF_CODE in self.STELLAR[request["schema"]].entities[ftype].fields:
                 FF_CODE+="_1"
                 i = 2
-                while FF_CODE in self.STELLAR[request["schema"]]["entities"][ftype]["fields"]:
+                while FF_CODE in self.STELLAR[request["schema"]].entities[ftype].fields:
                     FF_CODE = FF_CODE[:-1] + str(i)
                     i+=1
-            FF_NAME = f"{table_sc['multiname']} <-> {self.STELLAR[request['schema']]['entities'][ftype]['multiname']}"
-            FF_COMMAND = sql.SQL("""
-                INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), 'MULTIENTITY', false, (%s)) RETURNING uid
-            """)
-            f_id = self._run_command(FF_COMMAND, (FF_CODE, FF_NAME, json.dumps(FF_PARAMS)))[0]
-            self.__create_stellar_field_relation(f_id, self.STELLAR[request['schema']]['entities'][ftype]["id"])
+            FF_NAME = f"{table_sc['multiname']} <-> {self.STELLAR[request['schema']].entities[ftype].multiname}"
+            FF_OP = {
+                "table": "fields",
+                "entity": "Field",
+                "data": {
+                    "code": FF_CODE,
+                    "name": FF_NAME,
+                    "field_type": "MULTIENTITY",
+                    "indexed": False,
+                    "params": json.dumps(FF_PARAMS)  # TODO is the dumps necessary at this level?
+                }
+            }
+            f_id = (await stellardb.create(FF_OP))["uid"]
+            # FF_COMMAND = sql.SQL("""
+            #     INSERT INTO fields (code, name, field_type, indexed, params) VALUES ((%s), (%s), 'MULTIENTITY', false, (%s)) RETURNING uid
+            # """)
+            # f_id = self.database._run_command(FF_COMMAND, (FF_CODE, FF_NAME, json.dumps(FF_PARAMS)))[0]["uid"]
+            await __create_stellar_field_relation(f_id, self.STELLAR[request['schema']].entities[ftype].id, stellardb)
 
             # Prep constraint type for source field record
             SF_UPDATES["constraints"][ftype] = {
@@ -995,21 +1015,31 @@ class StellarStellar():
             }
 
         # Update source field record
-        SF_COMMAND = sql.SQL("""
-            UPDATE fields
-            SET params=(%s)
-            WHERE uid=(%s)
-            RETURNING uid
-        """)
-        f_id = self._run_command(SF_COMMAND, (json.dumps(SF_UPDATES),field_sc["id"]))[0]
+        SF_OP = {
+            "table": "fields",
+            "entity": "Field",
+            "entity_id": field_sc.id,
+            "data": {
+                "params": json.dumps(SF_UPDATES)  # TODO is the dumps necessary at this level?
+            }
+        }
+        await stellardb.update(SF_OP)
+
+        # SF_COMMAND = sql.SQL("""
+        #     UPDATE fields
+        #     SET params=(%s)
+        #     WHERE uid=(%s)
+        #     RETURNING uid
+        # """)
+        # f_id = self.database._run_command(SF_COMMAND, (json.dumps(SF_UPDATES),field_sc.id))[0]["uid"]
 
         # Comet needs to be at schema level to capture reverse fields
-        self.shoot_for_the_stars(level="schema", schema=request["schema"])
-        return True
+        # self.shoot_for_the_stars(level="schema", schema=request["schema"])
+        return Comet(schema=request["schema"])
 
 
 
-    def _field_delete_simple(self, request, db):
+    async def _field_delete_simple(self, request, db, stellardb):
         """
         Delete a record. It's presumed that archival management is done elsewhere.
         Deleting a simple field involves:
@@ -1018,24 +1048,19 @@ class StellarStellar():
 
         :param dict request: field deletion request
         :param db._database.Database db: physical DB connection
-
-        :returns: true to validate deletion
-        :rtype: bool
         """
         # Delete physical column
-        db.delete_field(self.STELLAR[request["schema"]]["entities"][request["entity"]]["code"], request["data"]["code"])
+        await db.delete_field(self.STELLAR[request["schema"]].entities[request["entity"]].code, request["data"]["code"])
 
-        DEL_FIELD_COMMAND = sql.SQL("""
-            DELETE FROM fields
-            WHERE uid = {uid}
-        """).format(
-            uid=sql.Literal(self.STELLAR[request["schema"]]["entities"][request["entity"]]["fields"][request["data"]["code"]]["id"])
-        )
-        self._run_command(DEL_FIELD_COMMAND, return_style=None)
-        return True
+        DEL_FIELD_OP = {
+            "table": "fields",
+            "entity": "Field",
+            "entity_id": self.STELLAR[request["schema"]].entities[request["entity"]].fields[request["data"]["code"]].id
+        }
+        await stellardb.delete(DEL_FIELD_OP)
 
 
-    def _field_delete_entity(self, request, _):
+    async def _field_delete_entity(self, request, _, stellardb):
         """
         Delete an entity field. It's presumed that archival management is done elsewhere.
         Deleting an entity field involves:
@@ -1046,113 +1071,149 @@ class StellarStellar():
                 - Remove source field from target field parameters
             - Shoot for the stars
 
+        BUG
+        Doesn't this leave lingering connection tables/entries?
+
         :param dict request: entity deletion request
         :param db._database.Database _: physical DB connection, unused but standardized
-
-        :returns: true to validate deletion
-        :rtype: bool
         """
-        stellar_field = self.STELLAR[request["schema"]]["entities"][request["entity"]]["fields"][request["data"]["code"]]
+        stellar_field = self.STELLAR[request["schema"]].entities[request["entity"]].fields[request["data"]["code"]]
         # Delete source field record
-        SF_DEL_COMMAND = sql.SQL("""
-            DELETE FROM fields
-            WHERE uid = {uid}
-        """).format(
-            uid=stellar_field["id"]
-        )
-        self._run_command(SF_DEL_COMMAND, return_style=None)
+        SF_DEL_OP = {
+            "table": "fields",
+            "entity": "Field",
+            "entity_id": stellar_field.id
+        }
+        await stellardb.delete(SF_DEL_OP)
+        # SF_DEL_COMMAND = sql.SQL("""
+        #     DELETE FROM fields
+        #     WHERE uid = {uid}
+        # """).format(
+        #     uid=stellar_field.id
+        # )
+        # self.database._run_command(SF_DEL_COMMAND, return_style=None)
         # Relation removal managed by FK cascade
 
         # Check each target field
-        for ftype, target in stellar_field["params"]["constraints"].items():
-            stellar_target = self.STELLAR[request["schema"]]["entities"][ftype]["fields"][target["col"]]
-            if len(stellar_target["params"]["constraints"]) == 1:
+        for ftype, target in stellar_field.params["constraints"].items():
+            stellar_target = self.STELLAR[request["schema"]].entities[ftype].fields[target["col"]]
+            if len(stellar_target.params["constraints"]) == 1:
                 # Sole target
-                FF_DEL_COMMAND = sql.SQL("""
-                    DELETE FROM fields
-                    WHERE uid = {uid}
-                """).format(
-                    uid=stellar_target["id"]
-                )
-                self._run_command(FF_DEL_COMMAND, return_style=None)
+                FF_DEL_OP = {
+                    "table": "fields",
+                    "entity": "Field",
+                    "entity_id": stellar_target.id
+                }
+                await stellardb.delete(FF_DEL_OP)
+                # FF_DEL_COMMAND = sql.SQL("""
+                #     DELETE FROM fields
+                #     WHERE uid = {uid}
+                # """).format(
+                #     uid=stellar_target.id
+                # )
+                # self.database._run_command(FF_DEL_COMMAND, return_style=None)
                 # Relation removal managed by FK cascade
             else:
                 # Target has other dependencies
-                stellar_target["params"]["constraints"].pop(request["entity"])
-                # for lftype, lftarget in stellar_target["params"]["constraints"].items():
-                #     if lftarget["col"] == request["data"]["code"]:
-                #         stellar_target["params"]["constraints"]["type"].pop(i)
-                FF_UPDATE_COMMAND = sql.SQL("""
-                    UPDATE fields
-                    SET params = {params}
-                    WHERE uid = {uid}
-                """).format(
-                    params=json.dumps(stellar_target["params"]),
-                    uid=stellar_target["id"]
-                )
-                self._run_command(FF_UPDATE_COMMAND, return_style=None)
+                stellar_target.params["constraints"].pop(request["entity"])
+                FF_UPDATE_OP = {
+                    "table": "fields",
+                    "entity": "Field",
+                    "entity_id": stellar_target.id,
+                    "data": {
+                        "params": json.dumps(stellar_target.params)  # TODO is the dumps necessary at this level?
+                    }
+                }
+                await stellardb.update(FF_UPDATE_OP)
+                # FF_UPDATE_COMMAND = sql.SQL("""
+                #     UPDATE fields
+                #     SET params = {params}
+                #     WHERE uid = {uid}
+                # """).format(
+                #     params=json.dumps(stellar_target.params),
+                #     uid=stellar_target.id
+                # )
+                # self.database._run_command(FF_UPDATE_COMMAND, return_style=None)
 
         # Comet needs to be at schema level to catch reverse field updates.
-        # Two comets are sent due to current design. TODO
-        self.shoot_for_the_stars(level="schema", schema=request["schema"])
-        return True
+        # self.shoot_for_the_stars(level="schema", schema=request["schema"])
+        return Comet(schema=request["schema"])
 
 
-    def _field_delete_media(self, request, db):
+    async def _field_delete_media(self, request, db, stellardb):
         """
-        TODO
+        TODO validate
         Delete a media field. It's assumed archival is handled elswhere.
         Deleting a media field involves most notibly DELETING ALL THE MEDIA TOO. Thus:
             - Fetch all records with this field filled out
             - Delete the media found in those fields
             - Drop the field normally
         """
-        entity_sc = self.STELLAR[request["schema"]]["entities"][request["entity"]]
+        entity_sc = self.STELLAR[request["schema"]].entities[request["entity"]]
         existings = []
         # Internal op, go wild with page size
         # BUG if the DB is actually insane, this will run out of RAM
-        with db.stage() as conn:
-            while len(existings) % 10000 == 0:
-                existings.extend(db.query(
-                    table=entity_sc["code"],
-                    fields=ReturnFieldSet(
-                        table=entity_sc["code"],
-                        name=None,
-                        values=[ReturnField(entity_sc["code"], request["data"]["code"])]
-                    ),
-                    filters={
-                        "filter_operator": "AND",
-                        "filters": [[request["data"]["code"], "is_not", None]]
-                    },
-                    pagination=10000,
-                    conn=conn
-                ))
-                if len(existings) == 0:
-                    # Maybe there is no media at all...
-                    break
-        print(existings)
+        while len(existings) % 10000 == 0:
+            existings.extend(await db.query(
+                table=entity_sc.code,
+                fields=ReturnFieldSet(
+                    table=entity_sc.code,
+                    name=None,
+                    values=[ReturnField(entity_sc.code, request["data"]["code"])]
+                ),
+                filters={
+                    "filter_operator": "AND",
+                    "filters": [[request["data"]["code"], "is_not", None]]
+                },
+                pagination=10000
+            ))
+            if len(existings) == 0:
+                # Maybe there is no media at all...
+                break
+        print(existings)  # TODO log
         # Delete all the existing files
         for existing in existings:
             p = Path(existing[request["data"]["code"]])
             p.unlink(missing_ok=True)
         # Then delete the field as a normal text field
-        return self._field_delete_simple(request, db)
+        await self._field_delete_simple(request, db, stellardb)
 
-
+# TODO
 # CALCULATED -> maybe
 # CURRENCY -> maybe
 # DATETIME -> maybe
 # DURATION -> maybe
 # FILE/LINK -> maybe
 # PERCENTAGE -> maybe
-    def __create_stellar_field_relation(self, f_id, e_id):
-        """
-        Simple function to generate a stellar field relation, since it's done all over.
-        Refactor TODO
-        """
-        # Create Stellar relation
-        R_COMMAND = sql.SQL("""
-            INSERT INTO _ss_fields_entities (fields_col, fk_fields, fk_entities, entities_col) VALUES ('entity', (%s), (%s), 'fields');
-        """)
-        self._run_command(R_COMMAND, (f_id, e_id), return_style=None)
-        return True
+async def __create_stellar_field_relation(f_id, e_id, stellardb):
+    """
+    Simple function to generate a stellar field relation, since it's done all over.
+    Refactor TODO
+    """
+    # Create Stellar relation
+    R_OP = {
+        "table": "_ss_fields_entities",
+        "entity": "_SS_CONNECTION",  # unused in practice
+        "data": {
+            "fields_col": "entity",
+            "fk_fields": f_id,
+            "fk_entities": e_id,
+            "entities_col": "fields"
+        }
+    }
+    await stellardb.create(R_OP)
+
+
+class Comet(dict):
+    """
+    Extremely simple dict expansion to define comet parameter requirements.
+    This allows stellar to report comet information back up to railgun in a
+    more readable fashion.
+    """
+    def __init__(self, schema=None, entity=None):
+        super().__init__()
+        self["comet_id"] = StellarStellar.COMET_ID  # Always needed.
+        if schema:
+            self["schema"] = schema
+            if entity:
+                self["entity"] = entity

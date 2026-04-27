@@ -4,11 +4,14 @@ GUD Database implementation for PostgreSQL.
 # Parent DB class
 from db._database import Database
 
-from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField, EntityReturnField, MultiEntityReturnField
+from src.structures.returnfields import PresetReturnField, ReturnField, EntityReturnField, MultiEntityReturnField
 
 import psycopg
-from psycopg import sql
+from psycopg import sql, AsyncConnection
 from psycopg.rows import dict_row
+
+import asyncio
+from psycopg_pool import AsyncConnectionPool
 
 
 ###############################
@@ -38,6 +41,14 @@ class PSQL(Database):
     """
     GUD-compliant PSQL connector.
     """
+    DEFAULT_WAIT_TIMEOUT = 2
+    DEFAULT_IDLE_TIMEOUT = 600
+    DEFAULT_MIN_POOL_SIZE = 4
+    DEFAULT_MAX_POOL_SIZE = 20
+    DEFAULT_MAX_QUEUE_SIZE = 0  # No limit
+    DEFAULT_MAX_LIFETIME = 3600
+    GENERAL_CONNECTION_KWARGS = {"autocommit": False, "row_factory": dict_row}
+
     DB_TYPE = "PSQL"
     LOI = "FULL"
     FIELD_TYPES = {
@@ -64,11 +75,25 @@ class PSQL(Database):
     def __init__(self, config_params):
         # Prep config
         self.connection_params = self._load_config(config_params)
-        self.connect()
+        self.connect()  # TODO validate continued use
 
+        # Format our config params for the string that ConnectionPools expect
+        strconfig = "".join([f"{key}={value} " for key, value in self.connection_params.items() if value])
         # This is the floating connection without autocommit.
-        # TODO change to async pools for more versatile scaling.
-        self.stage = lambda: psycopg.connect(**self.connection_params, row_factory=dict_row)
+        self.pool = AsyncConnectionPool(
+            strconfig,
+            connection_class=_PSQLConnection,
+            kwargs=PSQL.GENERAL_CONNECTION_KWARGS,
+            min_size=config_params.get("min_pool_size", PSQL.DEFAULT_MIN_POOL_SIZE),
+            max_size=config_params.get("max_pool_size", PSQL.DEFAULT_MAX_POOL_SIZE),
+            open=False,  # per psycopg documentation
+            timeout=config_params.get("queue_timeout", PSQL.DEFAULT_WAIT_TIMEOUT),
+            max_waiting=config_params.get("max_queue_size", PSQL.DEFAULT_MAX_QUEUE_SIZE),
+            max_lifetime=config_params.get("keep_alive_for", PSQL.DEFAULT_MAX_LIFETIME),
+            max_idle=config_params.get("keep_idle_for", PSQL.DEFAULT_IDLE_TIMEOUT)
+        )
+        asyncio.create_task(self.pool.open())
+        self.stage = self.pool.connection  # syntaxical sugar
 
         super().__init__()  # Blank
 
@@ -95,7 +120,7 @@ class PSQL(Database):
             autocommit=True,
             row_factory=dict_row
         )
-        self.version = self._run_command("SELECT version()")[0]#[0]  # lol
+        self.version = self._run_command("SELECT version()")[0]  # lol
         if not self.version:
             raise ConnectionError
 
@@ -131,37 +156,19 @@ class PSQL(Database):
     #####################################
     ###### Practical Accessability ######
     #####################################
+class _PSQLConnection(AsyncConnection):
+    """
+    The connection object is wrapped to allow functionality calls directly to the connection object that's dragged everywhere once staged.
+    TODO not sure how to abstractify this prettily, but I'm fairly certain it's practically generalizable
+    """
     ### SCHEMA ###
-    def fetch_table_names(self):
-        """
-        Fetch all table names. No transformation.
-        TODO fetch from Stellar
-        """
-        COMMAND = """SELECT table_name FROM information_schema.tables WHERE table_schema='public'"""
-        return [table_name[0] for table_name in self._run_command(COMMAND)]
-
-
-    def fetch_table_columns(self, table):
-        """
-        Fetch all columns of an existing table.
-        TODO fetch from Stellar
-        """
-        COMMAND = sql.SQL(
-            """SELECT column_name, data_type FROM information_schema.columns WHERE table_name=(%s)"""
-        )
-        # COMMAND = sql.SQL(
-        #     """SELECT * FROM {} LIMIT 0"""
-        # ).format(sql.Identifier(table))
-        field_codes = self._run_command(COMMAND, (table,))
-        return field_codes
-
-
-    def create_table(self, table_name):
+    async def create_table(self, table_name):
         """
         Create a new DB table, including default fields.
         Validation is assumed to be done by StellarStellar.
 
         :param str table_name: the name of the actual table to create (entity code)
+        :param AsyncConnection conn: open DB connection
         """
         COMMAND = sql.SQL("""
         CREATE TABLE {table_name} (
@@ -170,32 +177,31 @@ class PSQL(Database):
             _ss_archived BOOLEAN NOT NULL DEFAULT false
         )
         """).format(table_name=sql.Identifier(table_name))
-        return self._run_command(COMMAND, return_style=None)
+        return await self.execute(COMMAND)
 
 
-    def update_table(self, table_name):
+    async def update_table(self, table_name):
         """
         Nothing to do.
         """
         raise NotImplementedError
 
 
-    def delete_table(self, table_name):
+    async def delete_table(self, table_name):
         """
         Remove a DB table.
         Validation and archival management is assumed to be done by StellarStellar.
 
         :param str table_name: the name of the actual table to drop (entity code)
+        :param AsyncConnection conn: open DB connection
         """
         COMMAND = sql.SQL("""
             DROP TABLE {table} CASCADE;
-        """).format(
-            table=sql.Identifier(table_name)
-        )
-        return self._run_command(COMMAND, return_style=None)
+        """).format(table=sql.Identifier(table_name))
+        return await self.execute(COMMAND)
 
 
-    def create_field(self, table_name, field_name, field_type, nullable=True, default=None):
+    async def create_field(self, table_name, field_name, field_type, nullable=True, default=None):
         """
         Create a column in the physical DB.
         Validation is assumed to be done by Stellar Stellar.
@@ -203,6 +209,8 @@ class PSQL(Database):
         :param str table_name: table to create column in
         :param str field_name: name of column to create
         :param str field_type: type of field to create
+        :param AsyncConnection conn: open DB connection
+        :param bool nullable: switch to determine if the field can be null, default True
         :param str default: optional default value of field
 
         :raises: NotImplementedError if field_type is not recognized by the connector
@@ -225,17 +233,18 @@ class PSQL(Database):
             COMMAND += sql.SQL(" DEFAULT {default}").format(
                 default=default
             )
-        self._run_command(COMMAND, return_style=None)
+        await self.execute(COMMAND)
         return True
 
 
-    def delete_field(self, table_name, field_name):
+    async def delete_field(self, table_name, field_name):
         """
         Drop a column from a table.
         Validation and archival management is assumed to be done by Stellar Stellar.
 
         :param str table_name: table of the column
         :param str field_name: name of column to delete
+        :param AsyncConnection conn: open DB connection
 
         :returns: true to validate deletion
         :rtype: bool
@@ -247,60 +256,12 @@ class PSQL(Database):
             table=sql.Identifier(table_name),
             field=sql.Identifier(field_name)
         )
-        self._run_command(COMMAND, return_style=None)
-        return True
-
-
-    def create_enum(self, enum_name, enum_options):
-        """
-        Create an enum type. Railgun never uses these on it's own, but uses them for data
-        validation in List fields.
-
-        :param str enum_name: name of the type/enum, must be unique
-        :param list[str] enum_options: options that should be available
-
-        :returns: true to validate creation
-        :rtype: bool
-        """
-        COMMAND = sql.SQL("""
-            CREATE TYPE {enum_name} AS ENUM ({enum_options})
-        """).format(
-            enum_name=sql.Identifier(enum_name),
-            enum_options=sql.SQL(", ").join(enum_options)
-        )
-        self._run_command(COMMAND, return_style=None)
-        # ULTRA MEGA HACK
-        PSQL.FIELD_TYPES[enum_name] = enum_name
-        return True
-
-
-    def update_enum(self, enum_name, new_enum_options):
-        """
-        """
-        raise NotImplementedError
-
-
-    def delete_enum(self, enum_name):
-        """
-        Drop the enum type from the DB.
-        It's presumed that validation is done elsewhere.
-
-        :param str enum_name: Enum type to drop
-
-        :returns: true to validate deletion
-        :rtype: bool
-        """
-        COMMAND = sql.SQL("""
-            DROP TYPE {enum_name}
-        """).format(
-            enum_name=sql.Identifier(enum_name)
-        )
-        self._run_command(COMMAND, return_style=None)
+        await self.execute(COMMAND)
         return True
 
 
     ### DATA ###
-    def query(self, table, fields, filters=[], pagination=0, page=1, order="uid", conn=None):
+    async def query(self, table, fields, filters=[], pagination=0, page=1, order="uid"):
         """
         Run an optimized (TODO lol) guery.
         """
@@ -320,14 +281,11 @@ class PSQL(Database):
             order=sql.Identifier(order),
             group=baseGroup
         )
-        print(COMMAND.as_string(self.database))  # TODO log
-        if conn:
-            return conn.execute(COMMAND,  (pagination, (page*pagination)-pagination)).fetchall()
-        else:
-            return self._run_command(COMMAND, (pagination, (page*pagination)-pagination))
+        print(COMMAND.as_string(self))  # TODO log
+        return await (await self.execute(COMMAND,  (pagination, (page*pagination)-pagination))).fetchall()
 
 
-    def count(self, table, filters):
+    async def count(self, table, filters):
         """
         Run an optimized (TODO lol) guery.
         """
@@ -359,11 +317,11 @@ class PSQL(Database):
             filters=baseFilter,
             group=baseGroup
         )
-        print(COMMAND.as_string(self.database))  # TODO log
-        return self._run_command(COMMAND, return_style="solo")
+        print(COMMAND.as_string(self))  # TODO log
+        return await (await self.execute(COMMAND)).fetchone()
 
 
-    def create(self, op, conn):
+    async def create(self, op):
         """
         Create a record of a certain type, using column values found in the requested operation.
         Relations are handled by Railgun.
@@ -374,17 +332,18 @@ class PSQL(Database):
         :returns: type-uid dict of the created record
         :rtype: dict
         """
+        # TODO secure this, params is not safe
         params = ", ".join("(%s)" for _ in op['data'].values())
         COMMAND = sql.SQL("INSERT INTO {table} ({fields}) VALUES ("+params+") RETURNING {nicetype} as type, uid").format(
             table=sql.Identifier(op["table"]),
             fields=sql.SQL(", ").join([sql.Identifier(field) for field in op["data"].keys()]),
             nicetype=sql.Literal(op["entity"])
         )
-        print(COMMAND.as_string(conn))
-        return conn.execute(COMMAND, tuple(op["data"].values())).fetchone()
+        print(COMMAND.as_string(self))
+        return await (await self.execute(COMMAND, tuple(op["data"].values()))).fetchone()
 
 
-    def update(self, op, conn):
+    async def update(self, op):
         """
         Update a record of a certain type, using column values found in the requested operation.
         Relations are handled by Railgun.
@@ -406,11 +365,11 @@ class PSQL(Database):
             uid=sql.Literal(op["entity_id"]),
             nicetype=sql.Literal(op["entity"])
         )
-        print(COMMAND.as_string(conn))
-        return conn.execute(COMMAND).fetchone()
+        print(COMMAND.as_string(self))
+        return await (await self.execute(COMMAND)).fetchone()
 
 
-    def delete(self, op, conn):
+    async def delete(self, op):
         """
         Delete a record. It's assumed that archival management is done elsewhere.
         Boom goes the dynamite.
@@ -418,7 +377,7 @@ class PSQL(Database):
         :param dict op: delete operation to perform
         :param sql.Connection conn: active psycopg connection
 
-        :returns: the entity dict of the deleted record, even if it's gone forever ;_;
+        :returns: the entity dict of the deleted record (without the display_col_name), even if it's gone forever ;_;
         :rtype: dict
         """
         COMMAND = sql.SQL(
@@ -427,12 +386,12 @@ class PSQL(Database):
             table=sql.Identifier(op["table"]),
             uid=sql.Literal(op["entity_id"])
         )
-        print(COMMAND.as_string(conn))
-        conn.execute(COMMAND)
+        print(COMMAND.as_string(self))
+        await self.execute(COMMAND)
         return {"type": op["entity"], "uid": op["entity_id"]}
 
 
-    def delete_relation(self, rtable, tableA, s_col, s_uid, conn):
+    async def delete_relation(self, rtable, tableA, s_col, s_uid):
         """
         Removes all relations between table A and table B for a specific column and foreign key.
         Managing diffs would be a massive pain compared to how simple it is to just wipe and reset
@@ -455,11 +414,11 @@ class PSQL(Database):
             fk_tableA=sql.Identifier("fk_"+tableA),
             s_uid=sql.Literal(s_uid)
         )
-        print(COMMAND.as_string(conn))
-        conn.execute(COMMAND)
+        print(COMMAND.as_string(self))
+        await self.execute(COMMAND)
 
 
-    def create_relation(self, rtable, tableA, tableB, values, conn):
+    async def create_relation(self, rtable, tableA, tableB, values):
         """
         Create a relation between two records on a specific column.
         All relations are standardized by Stellar Stellar, thankfully.
@@ -480,8 +439,8 @@ class PSQL(Database):
             fk_tableB=sql.Identifier("fk_"+tableB),
             tableB_col=sql.Identifier(tableB+"_col")
         )
-        print(COMMAND.as_string(conn))
-        conn.execute(COMMAND, values)
+        print(COMMAND.as_string(self))
+        await self.execute(COMMAND, values)
 
 
 

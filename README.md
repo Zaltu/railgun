@@ -117,7 +117,7 @@ To call the backup script, once the container is running:
 docker exec -it deploy-stellardb-1 /opt/db_backup.sh
 ```
 
-## Nomenclature and Data Management Features
+## Nomenctature and Data Management Features
 Railgun is intended to act as a data management system. As a result, it is largely broken down into three primary chunks common to databases.  
 A breakdown of the default data provided with Railgun can be found in DEFAULT_SCHEMA.md (TODO).
 ### Schemas

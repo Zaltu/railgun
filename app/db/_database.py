@@ -8,6 +8,7 @@ import re
 class Database():
     """
     A GUD-compliant database.
+    TODO
     """
     def __init__(self):
         """
@@ -16,26 +17,7 @@ class Database():
     #####################################
     ###########   Abstract   ############
     #####################################
-    def connect(self):
-        raise NotImplementedError()
-
-    def disconnect(self):
-        raise NotImplementedError()
-
-    def fetch_table_names(self):
-        raise NotImplementedError()
-
-    def fetch_table_columns(self, table):
-        raise NotImplementedError()
-
-    def query(self, table, fields, filters, pagination, page, order):
-        raise NotImplementedError()
-
-    def validate_table_naming(text):
-        """
-        TODO
-        """
-        return re.match("^[a-z_]+$", text) != None
+    # TODO, revisit
 
 
 class CUDError(Exception):
