@@ -23,7 +23,6 @@ class AuthStaticFiles(StaticFiles):
 
         :params fastapi.Request request: standard request object
         """
-        print("AUTHENTICATING STATIC DISCHARGE")
         real_token = request.cookies.get("access_token") or request.headers.get("Authorization", "Bearer ").split("Bearer ")
         railsecure.authenticate_token(self.railgun_app, real_token)
 

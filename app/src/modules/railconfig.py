@@ -1,9 +1,9 @@
-import os
-import json
+import orjson
 
 from db import *
+from config import CONFIG
 
-DEFAULT_CONFIG_PATH = "/opt/railgun/config/db_secrets/"
+
 DB_TYPES = {
     "PSQL": PSQL
 }
@@ -11,13 +11,11 @@ DB_TYPES = {
 def RailConfig():
     """
     """
-    config_path = os.environ.get("RG_CONFIG_PATH") or DEFAULT_CONFIG_PATH
     dbcs = []
-    from glob import glob
-    cfiles = glob(os.path.join(config_path, "*"))
+    cfiles = CONFIG.DB_CONFIG_PATH.glob("*")
     for cfile in cfiles:
         with open(cfile, 'r') as infile:
-            dbcs.append(json.load(infile))
+            dbcs.append(orjson.loads(infile.read()))
 
     dbs = {}
     for db in dbcs:

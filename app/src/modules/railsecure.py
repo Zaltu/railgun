@@ -2,9 +2,11 @@
 This is really just a convenience wrapper to keep auth stuff self-contained.
 It could probably be reimagined as another stellar-like "special" DB connector,
 but it seems excessive given how simple the operations are.
+
+BUG There is currently a major flaw in that user logins are not enforced to be
+unique (in the running prod instance).
 """
-import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from fastapi import HTTPException
@@ -12,22 +14,7 @@ from fastapi import HTTPException
 import jwt
 from jwt import InvalidTokenError
 
-############################################
-######### Read consistant auth key #########
-############################################
-### This key needs to be consistent ########
-### accross deployments or else ############
-### authentication tokens will randomly ####
-### be invalid when the user connects to ###
-### a new host container. ##################
-############################################
-### Big TODO to make this smart. ###########
-############################################
-DEFAULT_SECRET_PATH = "/opt/railgun/config/auth.secret"
-with open(os.environ.get("RG_SECRET_PATH") or DEFAULT_SECRET_PATH, "r") as authfile:
-    TOKENIZER_KEY = authfile.read()
-TOKENIZER_ALGO = "HS256"
-TOKENIZER_EXPIRATION_MINS = 1440  # 24 hours
+from config import CONFIG
 
 
 async def authenticate_login(railgun_app, form_data):
@@ -47,18 +34,14 @@ async def authenticate_login(railgun_app, form_data):
     :raises HTTPException: 500 if internal error
     """
     try:
-        requested_user = form_data.username
-        existing_user = await _get_user_exists(railgun_app, requested_user)
-        # Not sure about multiple users, TODO
-        if not existing_user or len(existing_user)>1:
+        requested_user = form_data.username  # this is actually the login
+        existing_user = await railgun_app.STELLAR.fetch_user(requested_user)
+        if not existing_user:
             raise NoSuchUserException()
-        existing_user = existing_user[0]
         # Check password match
         if not _compare_passwords(form_data.password, existing_user["password"]):
             raise BadPasswordException()
-        # Pop the password so we dont carry it around in the token.
-        existing_user.pop("password")
-        token = _generate_token({"user": existing_user})
+        token = _generate_token(railgun_app, existing_user)
     except (NoSuchUserException, BadPasswordException):
         raise HTTPException(
             status_code=401,
@@ -79,14 +62,14 @@ async def authenticate_token(railgun_app, incoming_token):
     :param str incoming_token: auth token provided in the request
     """
     try:
-        detokened = jwt.decode(incoming_token, TOKENIZER_KEY, algorithms=[TOKENIZER_ALGO])
-        # Maybe user has been removed since token generation... (or disabled, TODO)
-        # This has been commented out 'cause I don't this method.
-        user = await _get_user_exists(railgun_app, detokened.get('user', {}).get('login'))
-        if not user or len(user) > 1:  # User probably disabled or deleted
+        detokened = jwt.decode(incoming_token, CONFIG.TOKENIZER_KEY, algorithms=[CONFIG.TOKENIZER_ALGO])
+        requested_login = detokened["sub"]
+        if railgun_app.STELLAR.USER_CACHE[requested_login].invalid_before > detokened["exp"]:
+            # All tokens with an expiration before the invalidation time should be considered revoked.
+            # If the user isn't cached, they've been removed and a KeyError will trigger.
             raise InvalidTokenError()
-        return {perm["uid"] for perm in (user[0]["permission_rules"] or [])}
-    except InvalidTokenError:
+        return railgun_app.STELLAR.USER_CACHE[requested_login].permission_groups
+    except (InvalidTokenError, KeyError):
         raise HTTPException(
             status_code=405,
             detail="Access token expired. Please log in again.",
@@ -94,30 +77,12 @@ async def authenticate_token(railgun_app, incoming_token):
         )
 
 
-async def _get_user_exists(railgun_app, requested_user):
-    """
-    Fetch any users with the requested username, and get their (salted) password.
-    TODO hook into stellar directly for optimization
-    """
-    async with railgun_app.STELLAR.database.stage() as db:
-        return await railgun_app._read(
-            db,
-            {
-                "schema": "railgun_internal",
-                "entity": "User",
-                "read": {
-                    "filters": {"filters": [["login", "is", requested_user]], "filter_operator": "AND"},
-                    "return_fields": ["login", "password", "permission_rules"],
-                    "pagination": 1
-                }
-            },
-            {1}  # Provide pseudo-admin permissions to ensure we can always validate logins
-        )
-
-
 def _compare_passwords(given_password, expected_hash):
     """
     Stab the given password and see if the wounds match.
+
+    :returns: if the password hashes match
+    :rtype: bool
     """
     return bcrypt.checkpw(
         given_password.encode(),
@@ -125,7 +90,7 @@ def _compare_passwords(given_password, expected_hash):
     )
 
 
-def _generate_token(to_encode):
+def _generate_token(railgun_app, user):
     """
     Generate a token with the user (provided param) and expiration time.
     Would add scope here, but scope will not be used :fingers_crossed:
@@ -135,9 +100,12 @@ def _generate_token(to_encode):
     :returns: bearer token
     :rtype: str
     """
-    expires_delta = timedelta(minutes=TOKENIZER_EXPIRATION_MINS)
-    to_encode["exp"] = datetime.now() + expires_delta  # TODO timezone management pepehands
-    return jwt.encode(to_encode, TOKENIZER_KEY, algorithm=TOKENIZER_ALGO)
+    to_encode = {
+        "iss": f"Railgun Server {railgun_app.STELLAR.COMET_ID}",
+        "sub": user["login"],
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=CONFIG.TOKENIZER_EXPIRATION_MINS)
+    }
+    return jwt.encode(to_encode, CONFIG.TOKENIZER_KEY, algorithm=CONFIG.TOKENIZER_ALGO)
 
 
 class NoSuchUserException(Exception):

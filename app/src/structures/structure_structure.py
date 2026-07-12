@@ -6,7 +6,42 @@ embedded dicts. Subclassing `dict` itself would be a possibility, but would like
 
 TODO permissions
 """
-from src.structures.returnfields import ReturnField, EntityReturnField, PresetReturnField, MultiEntityReturnField
+from src.structures.fields import FIELD_TYPES
+
+
+
+class StellarUserCache(dict):
+    """
+    TODO This might be a bit too whimsical
+
+    This dict should be populated with StellarUser objects using their logins as key.
+    """
+
+
+class StellarUser():
+    """
+    User ORM object
+    Stellar users define:
+    - username: non-unique username
+    - login: unique login
+    - password: their (encrypted) password
+    - permission_ids: A set of permission rule IDs
+    """
+    def __init__(self, username, login, permission_groups=[], invalid_before=None):
+        """
+        User instantiator, should really only be called by STELLAR.
+        Note that by default, if the user has been invalidated, the invalidation time is set to 0
+        (the dawn of time, 1970).
+
+        :param str username: username
+        :param str login: login
+        :param list permission_groups: list of the user's valid permission groups
+        :param float|None invalid_before: the last time (posix) at which this user's access was invalidated.
+        """
+        self.username = username
+        self.login = login
+        self.permission_groups = set(perm["uid"] for perm in permission_groups)
+        self.invalid_before = invalid_before or 0
 
 
 class STELLARWrapper(dict):
@@ -193,104 +228,21 @@ class Entity():
 
 
 
-class Field():
+def Field(entity, code, name, type, uid, index, params=None, archived=False):
     """
-    Field ORM object.
-    STELLAR Entities define:
-    - entity: the field's parent entity object
-    - code: db column name
-    - name: human-readable db column name
-    - type: Railgun field type
-    - id: internal id
-    - index: if field has index
-    - params: Railgun field parameters
-    - archived: if field archived
+    Factory to generate Field objects of the appropriate type during generation.
+    Should really only be called by STELLAR.
+
+    :param Entity entity: the field's parent entity
+    :param str code: db column name
+    :param str name: human-readable name
+    :param str type: field type
+    :param int id: stellardb field id
+    :param bool index: if field is indexed in db
+    :param dict params: RG field parameters
+    :param bool archived: archival status of the field
+
+    :returns: Simple_Field subobject corresponding to the field's type.
+    :rtype: Simple_Field
     """
-    def __init__(self, entity, code, name, type, id, index, params=None, archived=False):
-        """
-        Entity instantiator. Should really only be called by STELLAR.
-
-        :param Entity entity: the field's parent entity
-        :param str code: db column name
-        :param str name: human-readable name
-        :param str type: field type
-        :param int id: stellardb field id
-        :param bool index: if field is indexed in db
-        :param bool archived: archival status of the field
-        """
-        self.entity = entity
-        self.id = id
-        self.code = code
-        self.name = name
-        self.type = type
-        self.index = index
-        self.params = params
-        self.archived = archived
-        self.deormed = {  # Somewhat excessive optimization, but matches other layouts
-            "entity": self.entity.soloname,
-            "code": self.code,
-            "name": self.name,
-            "type": self.type,
-            "id": self.id,
-            "index": self.index,
-            "params": self.params,
-            "archived": self.archived,
-        }
-        self.return_field = None
-
-    def _define_return_field(self):
-        """
-        Define the self.return_field property of this Field Obj.
-        This needs to be done after the instantiation of the full schema tree to ensure any linked
-        fields on linked entities are defined and ready.
-        """
-        if self.type == "ENTITY":
-            for ftype in self.params["constraints"]:
-                ftype_obj = self.entity.schema.entities.get(ftype) or self.entity.schema._temp_entities[ftype]  # The schema may be mid-update
-                oneiterrf = EntityReturnField(
-                    name=self.code,
-                    join={"constraints": self.params["constraints"].values(), "local_table": self.entity.code},
-                    values=[
-                        PresetReturnField(name="type", value=ftype),
-                        ReturnField(table=ftype_obj.code, name="uid"),
-                        ReturnField(table=ftype_obj.code, name=ftype_obj.display_name_col)
-                    ]
-                )
-                # setdefault shenanigans
-                try:
-                    self.return_field.put(oneiterrf)
-                except AttributeError:
-                    self.return_field = oneiterrf
-        elif self.type == "MULTIENTITY":
-            value_prep = {}
-            for ftype in self.params["constraints"]:
-                ftype_obj = self.entity.schema.entities.get(ftype) or self.entity.schema._temp_entities[ftype]  # The schema may be mid-update
-                value_prep[ftype] = [
-                    PresetReturnField(name="type", value=ftype),
-                    ReturnField(table=ftype_obj.code, name="uid"),
-                    ReturnField(table=ftype_obj.code, name=ftype_obj.display_name_col)
-                ]
-            self.return_field = MultiEntityReturnField(
-                table=self.entity.code,
-                name=self.code,
-                join=self.params["constraints"],
-                values=value_prep
-            )
-            # BUG only one type is returned even for multi-entity multi-type right now. Fix will come with objectified fields
-            # Is that true?
-        else:
-            self.return_field = ReturnField(
-                self.entity.code,   # table name
-                self.code           # field code
-            )
-
-    def telescope(self, lightweight=False):
-        """
-        Provides a returnable, parsable form of the field obj.
-        Permissions TODO
-
-        :param bool lightweight: Not used. Exposed in order to maintain a certain level of
-                                 intercompatibility with all telescope operations.
-        """
-        return self.deormed
-
+    return FIELD_TYPES.get(type, FIELD_TYPES["default"])(entity, code, name, type, uid, index, params, archived)

@@ -6,11 +6,12 @@ from db._database import Database
 
 from src.structures.returnfields import PresetReturnField, ReturnField, EntityReturnField, MultiEntityReturnField
 
-import psycopg
 from psycopg import sql, AsyncConnection
 from psycopg.rows import dict_row
+from psycopg.types.json import set_json_dumps, set_json_loads
+import orjson
 
-import asyncio
+from lib.ragesync import execute_immediately
 from psycopg_pool import AsyncConnectionPool
 
 
@@ -68,17 +69,27 @@ class PSQL(Database):
         "not_contains": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" NOT ILIKE ") + sql.Literal("%%"+value+"%%"),
         "starts_with": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal(value+"%%"),
         "ends_with": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" ILIKE ") + sql.Literal("%%"+value),
-        #"in": "", TODO
+        #"in": "", TODO, should be table.field = ANY([list])
         "greater_than": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" > ") + sql.Literal(value),
         "less_than": lambda table, field, value: sql.Identifier(table)+sql.SQL(".")+sql.Identifier(field) + sql.SQL(" < ") + sql.Literal(value)
     }
     def __init__(self, config_params):
+        super().__init__()  # Blank
+        # IMPORTANT: These settings are technically global
+        set_json_loads(orjson.loads)
+        set_json_dumps(orjson.dumps)
+
         # Prep config
-        self.connection_params = self._load_config(config_params)
-        self.connect()  # TODO validate continued use
+        _connection_info = {
+            "dbname": config_params["DB_NAME"],
+            "user": config_params["DB_USER"],
+            "password": config_params.get("DB_PASSWORD"),
+            "host": config_params.get("DB_HOST"),
+            "port": config_params.get("DB_PORT"),
+        }
 
         # Format our config params for the string that ConnectionPools expect
-        strconfig = "".join([f"{key}={value} " for key, value in self.connection_params.items() if value])
+        strconfig = "".join([f"{key}={value} " for key, value in _connection_info.items() if value])
         # This is the floating connection without autocommit.
         self.pool = AsyncConnectionPool(
             strconfig,
@@ -92,65 +103,33 @@ class PSQL(Database):
             max_lifetime=config_params.get("keep_alive_for", PSQL.DEFAULT_MAX_LIFETIME),
             max_idle=config_params.get("keep_idle_for", PSQL.DEFAULT_IDLE_TIMEOUT)
         )
-        asyncio.create_task(self.pool.open())
+        execute_immediately(self.pool.open(wait=True))
         self.stage = self.pool.connection  # syntaxical sugar
-
-        super().__init__()  # Blank
-
-
-    def _load_config(self, config_params):
-        """
-        Load a (JSON) config file for DB connection info.
-        """
-        return {
-            "dbname": config_params["DB_NAME"],
-            "user": config_params["DB_USER"],
-            "password": config_params.get("DB_PASSWORD"),
-            "host": config_params.get("DB_HOST"),
-            "port": config_params.get("DB_PORT"),
-        }
 
 
     #####################################
     ###########  Connection  ############
     #####################################
-    def connect(self):
-        self.database = psycopg.connect(
-            **self.connection_params,
-            autocommit=True,
-            row_factory=dict_row
-        )
-        self.version = self._run_command("SELECT version()")[0]  # lol
-        if not self.version:
-            raise ConnectionError
-
-
-    def disconnect(self):
-        self.database.close()
-
-    
-    def _run_command(self, command, params=None, include_descriptors=False, return_style="multi"):
+    async def _run_command(self, command, params=None, return_style="multi"):
         """
         Execute a (dirty) command.
         TODO fully migrate to prepared statements.
         """
         try:
-            with self.database.cursor() as cur:
-                cur.execute(command, params)
+            async with self.stage() as conn:
+                cur = await conn.execute(command, params)
                 match return_style:
                     case "multi":
-                        values = cur.fetchall()
-                        if include_descriptors:
-                            fieldcodes = [desc[0] for desc in cur.description]
+                        values = await cur.fetchall()
                     case "solo":
-                        values = cur.fetchone()
+                        values = await cur.fetchone()
                     case _:
                         # Operation not expected to produce anything.
                         return
         except Exception as e:
             raise
 
-        return (values, fieldcodes) if include_descriptors else values
+        return values
 
 
     #####################################

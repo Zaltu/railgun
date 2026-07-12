@@ -1,9 +1,9 @@
 from fastapi import Request, Depends
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, ORJSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, APIKeyCookie
 
-import json
-from json.decoder import JSONDecodeError
+import orjson
+from orjson import JSONDecodeError
 
 # Imports for file upload management
 import aiofiles
@@ -11,15 +11,15 @@ import re
 from pathlib import Path
 import tempfile
 
+from config import CONFIG
 from src.railgun import Railgun
 from src.modules import railsecure
 from src.modules.railstatic import AuthStaticFiles
 
-from pprint import pprint as pp
 
 railgun_app = Railgun()
 # Do some initial setup if needed
-(Railgun.FILE_DIR / Railgun.FILE_TEMP_DIR).mkdir(parents=True, exist_ok=True)
+CONFIG.FILE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
 cookieauth_scheme = APIKeyCookie(name="access_token", auto_error=False)
@@ -43,7 +43,7 @@ async def alive():#token=Depends(oauth2_scheme)):
 @railgun_app.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):  # This is disgusting
     authentication = await railsecure.authenticate_login(railgun_app, form_data)
-    response = Response(json.dumps(authentication))
+    response = ORJSONResponse(authentication)
     response.set_cookie(
         key="access_token",
         value=authentication["access_token"],
@@ -59,7 +59,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):  # This is di
 @railgun_app.post("/create", dependencies=[Depends(authentication)])
 async def create(request: Request):  # Typing... The root of all evil.
     try:
-        request = await request.json()
+        request = orjson.loads(await request.body())
         response = await railgun_app.create(request)
     except JSONDecodeError:
         return "Bad request"
@@ -83,7 +83,7 @@ async def read(request: Request, auth=Depends(authentication)):  # Typing... The
 @railgun_app.post("/update", dependencies=[Depends(authentication)])
 async def update(request: Request):  # Typing... The root of all evil.
     try:
-        request = await request.json()
+        request = orjson.loads(await request.body())
         response = await railgun_app.update(request)
     except JSONDecodeError:
         return "Bad request"
@@ -96,7 +96,7 @@ async def update(request: Request):  # Typing... The root of all evil.
 @railgun_app.post("/delete", dependencies=[Depends(authentication)])
 async def delete(request: Request):  # Typing... The root of all evil.
     try:
-        request = await request.json()
+        request = orjson.loads(await request.body())
         response = await railgun_app.delete(request)
     except JSONDecodeError:
         return "Bad request"
@@ -109,7 +109,7 @@ async def delete(request: Request):  # Typing... The root of all evil.
 @railgun_app.post("/batch", dependencies=[Depends(authentication)])
 async def batch(request: Request):  # Typing... The root of all evil.
     try:
-        request = await request.json()
+        request = orjson.loads(await request.body())
         response = await railgun_app.batch(request)
     except JSONDecodeError:
         return "Bad request"
@@ -122,7 +122,7 @@ async def batch(request: Request):  # Typing... The root of all evil.
 @railgun_app.post("/telescope", dependencies=[Depends(authentication)])
 async def telescope(request: Request):  # Typing... The root of all evil.
     try:
-        request = await request.json()
+        request = orjson.loads(await request.body())
         response = railgun_app.telescope(request)
     except:
         raise
@@ -133,7 +133,7 @@ async def telescope(request: Request):  # Typing... The root of all evil.
 @railgun_app.post("/stellar", dependencies=[Depends(authentication)])
 async def stellar(request: Request):  # Typing... The root of all evil.
     try:
-        request = await request.json()
+        request = orjson.loads(await request.body())
         response = await railgun_app.stellar(request)
     except JSONDecodeError:
         return "Bad request"
@@ -146,7 +146,8 @@ async def stellar(request: Request):  # Typing... The root of all evil.
 @railgun_app.post("/stellar/{internal_entity}/{operation}")
 async def stellar(request: Request, internal_entity, operation, auth=Depends(authentication)):  # Typing... The root of all evil.
     try:
-        response = await railgun_app.internal_operations(internal_entity, operation, await request.json(), auth)
+        request = orjson.loads(await request.body())
+        response = await railgun_app.internal_operations(internal_entity, operation, request, auth)
     except JSONDecodeError:
         return "Bad request"
     except:
@@ -158,7 +159,6 @@ async def stellar(request: Request, internal_entity, operation, auth=Depends(aut
 @railgun_app.post("/upload", dependencies=[Depends(authentication)])
 async def upload(request: Request):  # Typing... The root of all evil.
     # TODO forward process to railgun, the logic shouldn't be here
-    pp(request.headers)
     boundary = ("--"+request.headers["content-type"].split("boundary=")[1]).encode('ascii')
 
     metadata = None
@@ -167,7 +167,7 @@ async def upload(request: Request):  # Typing... The root of all evil.
 
     # HACK using a private function to generate the name is a bit cringe,
     # but it should guarentee we have a unique available temp file name
-    temp_file_path = Railgun.FILE_DIR / Railgun.FILE_TEMP_DIR / ("RG_"+next(tempfile._get_candidate_names()))
+    temp_file_path = CONFIG.FILE_TEMP_DIR / ("RG_"+next(tempfile._get_candidate_names()))
     print(temp_file_path)
 
     async with aiofiles.open(temp_file_path, 'wb+') as tempwritefile:
@@ -187,7 +187,7 @@ async def upload(request: Request):  # Typing... The root of all evil.
 
                     if b'name="metadata"' in procpart:
                         # We can do this because json will ignore newlines wrapping the general data
-                        metadata = json.loads(part.split(b'name="metadata"\r\n\r\n')[1])
+                        metadata = orjson.loads(part.split(b'name="metadata"\r\n\r\n')[1])
                         print(metadata)
                     elif b'name="file"' in procpart:
                         # Write the actual chunk part to the file
@@ -234,10 +234,10 @@ async def upload(request: Request):  # Typing... The root of all evil.
 async def download(request: Request):  # Typing... The root of all evil.
     # TODO forward process to Railgun, the logic shouldn't be here
     try:
-        req = await request.json()
+        req = orjson.loads(await request.body())
         if "path" in req:
-            filepath = (Railgun.FILE_DIR / Path(req["path"])).absolute().resolve()
-            if Railgun.FILE_DIR not in filepath.parents:
+            filepath = (CONFIG.FILE_DIR / Path(req["path"])).absolute().resolve()
+            if CONFIG.FILE_DIR not in filepath.parents:
                 raise Exception()  # TODO
             print("Reading from path: %s" % str(filepath))
             assert filepath.exists()
@@ -253,8 +253,9 @@ async def download(request: Request):  # Typing... The root of all evil.
         response = "Error"  # TODO
     return response
 
+
 railgun_app.mount(
     "/discharge",
-    AuthStaticFiles(railgun_app=railgun_app, directory=Railgun.FILE_DIR),
+    AuthStaticFiles(railgun_app=railgun_app, directory=CONFIG.FILE_DIR),
     name="discharge",
 )

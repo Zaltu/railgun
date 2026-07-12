@@ -1,20 +1,20 @@
-import os
 from pathlib import Path
 from json import JSONDecodeError
 
 # Needed for one op
 import shutil
 
-import bcrypt
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.modules.railconfig import RailConfig
 from src.stellar_stellar import StellarStellar
 from db._database import CUDError
-
+from config import CONFIG
 from src.structures.returnfields import ReturnFieldSet, PresetReturnField, ReturnField, EntityReturnField, MultiEntityReturnField
 from src.structures.internal_ops import InternalOperations
+
 
 _DEFAULT_QUERY_FILTER = lambda request:{
     "filter_operator": "AND",
@@ -29,17 +29,15 @@ ALLOWED_CORS_ORIGINS = [
         'http://localhost',
         'http://127.0.0.1',
 ]
-ALLOWED_CORS_ORIGINS.extend(os.environ["RG_URL"].split(","))
+ALLOWED_CORS_ORIGINS.extend(CONFIG.RG_URLS)
 
 
 class Railgun(FastAPI):
     """
     Kaboom.
     """
-    FILE_DIR=Path(os.environ.get("RG_FILE_DIR") or "/opt/railgun/files")
-    FILE_TEMP_DIR="_ss_working"
     def __init__(self):
-        super().__init__()
+        super().__init__(default_response_class=ORJSONResponse)
 
         self.add_middleware(
             CORSMiddleware,
@@ -118,7 +116,7 @@ class Railgun(FastAPI):
                 filters["filters"].extend(permissionRules)
             elif permissionRules == False:  # IMPORTANT if no permissions explicitely defined, RETURN NOTHING. zero-trust
                 return []
-        
+
         if request["read"].get("filters"):
             filters["filters"].append(request["read"]["filters"])
 
@@ -126,16 +124,16 @@ class Railgun(FastAPI):
         return_fields = ReturnFieldSet(schema_sc[request["entity"]].code, None, [])
 
         # Ensure return_fields exists
-        request["read"]["return_fields"] = request["read"].get("return_fields", [])
-        if "uid" not in request["read"]["return_fields"]:
-            request["read"]["return_fields"].append("uid")
-        if schema_sc[request["entity"]].display_name_col not in request["read"]["return_fields"]:
-            request["read"]["return_fields"].append(schema_sc[request["entity"]].display_name_col)
+        requested_return_fields = request["read"].get("return_fields", [])
+        if "uid" not in requested_return_fields:
+            requested_return_fields.append("uid")
+        if schema_sc[request["entity"]].display_name_col not in requested_return_fields:
+            requested_return_fields.append(schema_sc[request["entity"]].display_name_col)
 
         # Always include base type
         return_fields.put(PresetReturnField("type", request["entity"]))
 
-        for field in request["read"]["return_fields"]:
+        for field in requested_return_fields:
             if "." in field:
                 # Assume linked field, normal fields should not have special characters in their codes
                 linked_field = field.split(".")
@@ -386,7 +384,7 @@ class Railgun(FastAPI):
             result = await db.delete(op)
             # Delete any files
             # Part of the connection block as changes will un-commit if file op fails
-            ent_file_dir = Railgun.FILE_DIR / op["schema"] / op["table"] / str(op["entity_id"])
+            ent_file_dir = CONFIG.FILE_DIR / op["schema"] / op["table"] / str(op["entity_id"])
             if ent_file_dir.exists():
                 shutil.rmtree(ent_file_dir)
         else:
@@ -423,7 +421,7 @@ class Railgun(FastAPI):
         entcode = self.STELLAR.STELLAR[metadata["schema"]].entities[metadata["type"]].code
 
         internal_final_path = Path(metadata["schema"]) / entcode / str(metadata["uid"]) / (metadata["field"]+"_"+filename.decode())
-        absolute_final_path = Railgun.FILE_DIR / internal_final_path
+        absolute_final_path = CONFIG.FILE_DIR / internal_final_path
 
         print("Intended path:")
         print(absolute_final_path)
@@ -514,6 +512,7 @@ class Railgun(FastAPI):
 
                 > IF request_type == UPDATE
                 "code": <field_code>,
+                "name": <field_name>,  # OPTIONAL
                 "options": <field_options>  # OPTIONAL
                 
                 > IF request_type == DELETE
@@ -570,7 +569,7 @@ class Railgun(FastAPI):
                     comet = await self.STELLAR.funny_factory[request["part"]][request["request_type"]](request, db, stellardb)
             if comet:
                 # Stellar Stellar
-                self.STELLAR.shoot_for_the_stars(comet)
+                await self.STELLAR.shoot_for_the_stars(comet)
         except NotImplementedError:
             resp = "NYI"
         except AssertionError:
@@ -628,52 +627,11 @@ class Railgun(FastAPI):
         for op_field in list(op["data"].keys()):  # HACK allow us to pop for entity fields
             # Assume archival stuff is managed properly. Someone could meme it potentially though.
             # Not actually relevant on creation, realistically, but ease of generalization
-            if op_field == "_ss_archived":
+            if op_field == "_ss_archived":  # TODO maybe archive should be its own type?
                 continue
-            # Optimization
-            stellar_field = self.STELLAR.STELLAR[op["schema"]].entities[op["entity"]].fields[op_field]
-            # Middleware for applicable field types
-            # TODO include format validation middleware for json type
-            if stellar_field.type == "LIST":
-                # Validate list option exists
-                assert op["data"][op_field] in stellar_field.params.get("constraints", [])
-            elif stellar_field.type == "MULTIENTITY":
-                # we presume that the value being used for data is correct
-                rel_manager.append({
-                    "sf": stellar_field,
-                    "data": op["data"].pop(op_field) or []  # [] in case set to None
-                })
-            elif stellar_field.type == "ENTITY":
-                # we presume that the value being used for data is correct
-                # Slap the single entity update into a list and hope for the best
-                assert type(op["data"][op_field]) == dict
-                rel_manager.append({
-                    "sf": stellar_field,
-                    "data": [op["data"].pop(op_field) or []]  # [] in case set to None
-                })
-            elif stellar_field.type == "MEDIA":
-                # Media fields can be set to an existing local path within FILE_DIR or None to unset.
-                # Otherwise new media needs to be added via /upload
-                if op["data"][op_field]:
-                    # We do this to allow manual manipulations if absolutely needed.
-                    abs_path = (Railgun.FILE_DIR / Path(op["data"][op_field])).absolute().resolve()
-                    assert Railgun.FILE_DIR in abs_path.parents
-                    assert abs_path.exists()
-                elif "entity_id" in op:  # This can only be done on update, on create there will be nothing to do
-                    # Set to None in order to "wipe" the field, but then we need to delete the media...
-                    # TODO this *really* shouldn't happen here, the op hasn't actually passed through yet.
-                    # BUG field names could overlap and cause there to be more than one, or an incorrect file being matched.
-                    # The real path needs to be fetched from DB for deletion.
-                    # Any kind of failure and it's joever...
-                    # Locate general entity path
-                    ent_file_dir = Railgun.FILE_DIR / op["schema"] / op["table"] / str(op["entity_id"])
-                    # Get all potential files (though should be one)
-                    file = list(ent_file_dir.glob(op_field+"*"))
-                    assert len(file) <= 1  # Could already be no file
-                    file[0].unlink()
-            elif stellar_field.type == "PASSWORD":
-                # Encrypt incoming password data
-                op["data"][op_field] = bcrypt.hashpw(op["data"][op_field].encode(), bcrypt.gensalt()).decode()
+            rel = self.STELLAR.STELLAR[op["schema"]].entities[op["entity"]].fields[op_field].middleware(op)
+            if rel:
+                rel_manager.append(rel)
         return rel_manager
 
 
